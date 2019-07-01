@@ -1,2 +1,2 @@
 # jamble
-Tools for interacting over BLE with Loligo Berries (and other boards)
+Tools for interacting over Bluetooth LE (BLE) with Loligo Berries (and other boards)
