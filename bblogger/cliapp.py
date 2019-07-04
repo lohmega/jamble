@@ -3,6 +3,7 @@ import sys
 import argparse
 import logging
 import pprint
+from time import sleep
 
 BOOL_CHOICES_DICT = { 'on':True, 'off':False}
 BOOL_CHOICES = BOOL_CHOICES_DICT.keys()
@@ -29,7 +30,7 @@ def die(*args, **kwargs):
     print('ERROR:', *args, file=sys.stderr, **kwargs)
     exit(1)
 
-def getBlueBerryDevice(args, cached=True):
+def get_device(args, cached=True):
 
     if args.address is None:
         return die('No address')
@@ -49,53 +50,53 @@ def getBlueBerryDevice(args, cached=True):
         return die('More then one berry found. Which one of the following to \
                 use?', devs)
 
-    else:
-        dev = devs[0]
-        print('Using:', dev.addr, dev.name) 
-        return dev
+   
+    dev = devs[0]
+    print('Using:', dev.addr, dev.name) 
+    return dev
 
-def doBlink(args):
-    with getBlueBerryDevice(args) as dev:
-        for n in range(0, args.num):
-            print(dev.addr, dev.name, 'blinking..')
-            dev.blinkLED()
+def unlock_device(dev, password):
+    ''' assume device to be connected '''
+    if dev.pw_required():
+        if password is None:
+            return die('Password required for device', dev.addr)
+        dev.pw_unlock(args.password)
 
-def doScan(args):
+def do_scan(args):
     devs = bblogger.devices(cached=True)
     for dev in devs:
         print(dev.addr, dev.name)
 
+def do_blink(args):
+    with get_device(args) as dev:
+        #password not needed for blink
+        for n in range(0, args.num):
+            print(dev.addr, dev.name, 'blinking..')
+            dev.blinkLED()
 
-def doConfigWrite(args):
+def do_config_write(args):
     toBool = lambda s: BOOL_CHOICES_DICT[s]
-    d = vars(args)
+    argsd = vars(args)
     confd = {}
-    for k, v in d.items():
+    for k, v in argsd.items():
         if k not in CONFIG_FIELDS:
             continue
         if v is None:
             continue
         confd[k] = v
 
-    # if args.all is not None:
-        # default = args.all
-        # provided = d.keys()
-        # for k in SENSOR_NAMES:
-            # if k in provided:
-                # continue
-            # confd[k] = default
-
     print_dbg(confd)
-    with getBlueBerryDevice(args) as dev:
+    with get_device(args) as dev:
+        unlock_device(dev, args.password)
         dev.config_write(**confd)
 
-def doConfigRead(args):
+def do_config_read(args):
     
     def toOnOff(_v):
         assert(_v is not None)
         return 'on' if _v else 'off'
-
-    with getBlueBerryDevice(args) as dev:
+    # password not needed for read
+    with get_device(args) as dev:
         conf = dev.config_read()
 
     printkv = lambda _k, _v: print('  ', _k.ljust(12), ':', _v)
@@ -113,7 +114,71 @@ def doConfigRead(args):
         v = toOnOff(conf[k])
         printkv(k, v)
 
-def doFetch(args):
+def have_config_field(args):
+    argsd = vars(args)
+    for k, v in argsd.items():
+        if v is None:
+            continue
+        if k in CONFIG_FIELDS:
+            return True
+    return False
+
+def do_config(args):
+    if have_config_field(args):
+        do_config_write(args)
+    else:
+        do_config_read(args)
+
+def do_config_password(args):
+    # TODO verify oasswird format first
+    addr = args.address
+
+    if addr is None or addr == '0':
+        return die('Address is required when setting password') 
+            
+    if args.password is None or len(args.password) == 0:
+        disable = True
+    else:
+        disable = False
+
+    while True:
+        devs = bblogger.devices(addr=addr, 
+                    cached=False)
+        if len(devs) == 0:
+            print('No device with addr', addr, 'found. Insert battery!? Retrying...')
+            sleep(1)
+            continue
+
+        assert(len(devs) == 1)
+        dev = devs[0]
+        try:
+            dev.connect()
+            rc, s = dev.pw_status()
+            if disable:
+                if rc in (bblogger.PW_STATUS_INIT, bblogger.PW_STATUS_DISABLED):
+                    print('Password protection is disabled')
+                    return
+            else:
+                if rc == bblogger.PW_STATUS_INIT:
+                    dev.pw_set(args.password)
+                    print('Password protection enabled')
+                    return
+                else:
+                    print('Device not in init mode. Please power cycle device')
+                    sleep(1)
+                    continue
+            dev.disconnect()
+
+        except TimeoutError as e:
+            print('Failed to connect, retrying...')
+            sleep(1)
+        except KeyboardInterrupt:
+            print('Aborted')
+
+            
+
+
+def do_fetch(args):
     
     if args.file is None:
         ofile = sys.stdout
@@ -121,8 +186,8 @@ def doFetch(args):
         ofile = open(args.file, 'w')
         #raise NotImplementedError('TODO open file, check exists etc') # TODO
 
-
-    with getBlueBerryDevice(args) as dev:
+    with get_device(args) as dev:
+        unlock_device(dev, args.password)
         dev.fetch(rtd=args.rtd, 
                 nentries=args.num,
                 ofmt=args.fmt,
@@ -132,7 +197,7 @@ def doFetch(args):
         ofile.close()
 
 
-def verbosity(level):
+def set_verbosity(level):
     if level <= 0:
        #level = logging.NOTSET
        level = logging.WARNING
@@ -140,6 +205,7 @@ def verbosity(level):
         level = logging.DEBUG
     logging.getLogger().setLevel(level)
     _logger.setLevel(level)
+
 
 
 def main():
@@ -159,7 +225,7 @@ def main():
 
     sp = subparsers.add_parser('blink', 
             description='Blink LED on device for physical identification')
-    sp.set_defaults(_actionFunc=doBlink)
+    sp.set_defaults(_actionfunc=do_blink)
 
     sp.add_argument('--num', '-n', metavar='N', type=int, 
             default=1,
@@ -170,62 +236,60 @@ def main():
 
     sp = subparsers.add_parser('scan', 
             description='Show list of BlueBerry logger devices')
-    sp.set_defaults(_actionFunc=doScan)
+    sp.set_defaults(_actionfunc=do_scan)
     sps.append(sp)
 
     # ---- CONFIG WRITE ------------------------------------------------------
 
-    def onOffBool(s):
+    def onoffbool(s):
         if s not in BOOL_CHOICES_DICT:
             msg = 'Valid options are {}'.format(BOOL_CHOICES_DICT.keys())
             raise argparse.ArgumentTypeError(msg)
         return BOOL_CHOICES_DICT[s]
 
-    sp = subparsers.add_parser('conf-write', 
-            description='Write or modify device configuration ')
-    sp.set_defaults(_actionFunc=doConfigWrite)
+    sp = subparsers.add_parser('config', 
+            description='configure or show configuration')
+    sp.set_defaults(_actionfunc=do_config)
+    cfa = sp.add_argument_group('Config fields', 
+            description='show config if none provided')
     #gsensors = sp.add_mutually_exclusive_group()
     for s in SENSOR_NAMES:
-        sp.add_argument('--{}'.format(s), 
+        cfa.add_argument('--{}'.format(s), 
                 #'-{}'.format(s.symbol), 
                 metavar='ONOFF', 
-                type=onOffBool,
+                type=onoffbool,
                 #choices=BOOL_CHOICES,
                 help='sensor on|off')
 
-    # sp.add_argument('--all', 
+    # cfa.add_argument('--all', 
             # metavar='ONOFF', 
-            # type=onOffBool,
+            # type=onoffbool,
             # help='All sensors on|off. Can be combined with indvidual sensors \
             # on|off for easier configuration')
 
-
-    sp.add_argument('--logging', 
-            type=onOffBool,
+    cfa.add_argument('--logging', 
+            type=onoffbool,
             metavar='ONOFF', 
             #choices=BOOL_CHOICES,
             help='Logging (global) on|off (sensor data stored)')
 
-    sp.add_argument('--interval', type=int, 
+    cfa.add_argument('--interval', type=int, 
             help='Global log interval in seconds')
-    
-    # TODO 
-    # sp.add_argument('--new-password', 
-            # help='Set (or change) password. Printable ASCII only')
     sps.append(sp)
 
-    # ---- CONFIG READ -------------------------------------------------------
+    # ---- CONFIG-PASSWORD ---------------------------------------------------
 
-    sp = subparsers.add_parser('conf-read', 
-            description='Read device configuration')
-    sp.set_defaults(_actionFunc=doConfigRead)
+    sp = subparsers.add_parser('config-password', #'config-pw',
+            description='set (new) disable password. \
+            requires device power cycle. empty password to disable')
+    sp.set_defaults(_actionfunc=do_config_password)
     sps.append(sp)
 
     # ---- FETCH -------------------------------------------------------------
 
     sp = subparsers.add_parser('fetch', # parents=[parser],
             description='Fetch sensor data')
-    sp.set_defaults(_actionFunc=doFetch)
+    sp.set_defaults(_actionfunc=do_fetch)
     sp.add_argument('--file', help='Data output file')
     sp.add_argument('--rtd', 
             action='store_true',
@@ -242,8 +306,8 @@ def main():
 
     for sp in sps:
         # TODO
-        # sp.add_argument('--password', '--pw',
-                # default=None, help='Needed if device is password protected')
+        sp.add_argument('--password', '--pw',
+                default=None, help='Needed if device is password protected')
         sp.add_argument('--address', '-a', 
                 metavar='ADDR', 
                 help='BLE device address. if set to "0", the first BlueBerry device \
@@ -267,13 +331,14 @@ def main():
 
         parser.exit()
 
-    verbosity(args.verbose)
+    set_verbosity(args.verbose)
+
     print_dbg(args)
 
     print_dbg('----- VERSIONS ----\n',
             pprint.pformat(bblogger.versions()))
 
-    args._actionFunc(args)
+    args._actionfunc(args)
 
 
 if __name__ == '__main__':

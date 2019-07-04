@@ -336,13 +336,19 @@ class CmdRxData(bytearray):
         else:
             return 'UNKNOWN_STATUS_0x{:02X}'.format(scode)
 
+PW_STATUS_INIT       = 0x00 
+PW_STATUS_UNVERIFIED = 0x01
+PW_STATUS_VERIFIED   = 0x02 
+PW_STATUS_DISABLED   = 0x03
+
 class BlueBerryLogger(object):
 
     def __init__(self, bleDev, addr=None):
         self._bleDev = bleDev
         
     def __enter__(self):
-        return self.connect()
+        self.connect()
+        return self
 
     def __exit__(self, exctype, excval, traceback):
         self._bleDev.disconnect()
@@ -364,7 +370,6 @@ class BlueBerryLogger(object):
 
         self._service = s
         print_dbg('logEP', pprint.pformat(self._cLogData._properties()))
-        return self
 
 
     def diconnect(self):
@@ -403,11 +408,11 @@ class BlueBerryLogger(object):
         return self._bleDev.name
     
     def _docmdtxrx(self, txdata, rxsize):
-        with self._cmdrx.notifications.enable() as reply:
+        with self._cmdrx.notifications as reply:
             self._cmdtx.write(txdata, ctype='uint8')
             rxdata = reply.read(rxsize, timeout=5)
 
-        if rxdata[0] != (txdata[0] | 0x80):
+        if rxsize and rxdata[0] != (txdata[0] | 0x80):
             raise RuntimeError('Unexpected cmd id in respone')
 
         return rxdata
@@ -477,7 +482,7 @@ class BlueBerryLogger(object):
 
         bbld = BlueBerryLoggerDeserializer(ofmt=ofmt, ofile=ofile)
 
-        with c.notifications.enable() as pbdata:
+        with c.notifications as pbdata:
             while True:
                 chunk = pbdata.read(timeout=10)
                 haveEOF = bbld.putb(chunk)
@@ -489,23 +494,28 @@ class BlueBerryLogger(object):
                         break
 
     def pw_set(self, s):
-        ''' set password '''
+        ''' if pw_status is "init", set new password, 
+        if pw_status="unverified", unlock device
+        '''
         emsg = 'Password must be 8 chars and ascii only'
         try:
-            data = s.decode('ascii')
+            data = bytearray(s.encode('ascii'))
         except UnicodeDecodeError:
             raise TypeError(emsg)
         if len(data) != 8:
             raise TypeError(emsg)
         data.insert(0, 0x06) ## 0x06 = command code 
-        rsp = self._docmdtxrx(data, 1)
+        self._cmdtx.write(data)
+        #rsp = self._docmdtxrx(data, 0)
 
+
+    def pw_unlock(self, pw):
+        pw_set(pw)
 
     def pw_required(self):
         ''' is password requried for this device''' 
         rc, s = self.pw_status()
-        assert(rc != 0x00) # will this ever occur. inconclusvie
-        return True if rc == 0x01 else False
+        return bool(rc == PW_STATUS_UNVERIFIED)
     
     def pw_status(self):
         ''' password status '''

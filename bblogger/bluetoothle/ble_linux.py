@@ -348,7 +348,7 @@ class _GattCharacteristicNotifications(object):
     def __init__(self, charac):
         self._charac = charac
         self._queue = queue.Queue() # Queue is thread safe 
-        self._enabled = False
+        #self._enabled = False
         self._partial = None
 
         self._evtEnable = threading.Event()
@@ -367,7 +367,6 @@ class _GattCharacteristicNotifications(object):
         return '{} Notifications '.format(repr(self._charac))
 
     def __enter__(self):
-        self._clear()
         self.enable()
         return self
 
@@ -484,27 +483,34 @@ class _GattCharacteristicNotifications(object):
     def enable(self):
         assert(self._evtEnable.is_set()) # no pending enable
         assert(self._evtDisable.is_set()) # no pending disable
+        assert(self._charac._device.isConnected)
+
         if self._isEnabled():
-            print_dbg(self, 'already enabled')
+            print_dbg(self, 'Already enabled')
             return self
+        self._clear()
 
         self._evtEnable.clear()
         self._ifChar.StartNotify()
         if not self._evtEnable.wait(TIMEOUT_SEC):
             raise TimeoutError('enable/StartNotify')
         
+        print_dbg(self, 'Enabled')
         return self # with x.enable() as y
 
     def disable(self):
         assert(self._evtEnable.is_set()) # no pending enable
         assert(self._evtDisable.is_set()) # no pending disable
-        if not self._isEnabled():
-            print_dbg(self, 'already disabled')
+        # if not self._isEnabled():
+            # print_dbg(self, 'already disabled')
+            # return
 
-        self._evtEnable.clear()
+        self._evtDisable.clear()
         self._ifChar.StopNotify()
         if not self._evtDisable.wait(TIMEOUT_SEC):
             raise TimeoutError('disable/StopNotify')
+
+        print_dbg(self, 'Disabled')
         
 
 
@@ -646,13 +652,11 @@ class Device(object):
         return str(self)
     
     def __enter__(self):
-        if not self.isConnected:
-            self.connect()
+        self.connect()
         return self
 
     def __exit__(self, exctype, excval, traceback):
-        if self.isConnected:
-            self.disconnect()
+        self.disconnect()
         return False
 
     def _property(self, name):
@@ -704,6 +708,7 @@ class Device(object):
         print_dbg(self, 'connecting...')
 
         if self.isConnected:
+            print_dbg(self, 'already conected')
             return self # use with
         
         assert(self._evtConnect.is_set()) # no pending connect
@@ -711,23 +716,50 @@ class Device(object):
 
         self._evtConnect.clear()
        
-        # errorMsg = None
+        dbuserr = None
+        if 0:
+            def onSuccess():
+                self._evtConnect.set()
 
-        # def onSuccess():
-            # self._evtConnect.set()
+            def onError(e):
+                dbuserr = e #('Connect', e.get_dbus_name(), e.get_dbus_message())
+                self._evtConnect.set()
 
-        # def onError(e):
-            # errorMsg = ('Connect', e.get_dbus_name(), e.get_dbus_message())
-            # self._evtConnect.set()
+            self._ifDev.Connect(
+                    reply_handler=onSuccess,
+                    error_handler=onError)
 
-        self._ifDev.Connect()#reply_handler=onSuccess, error_handler=onError)
+        else:
+            try:
+                self._ifDev.Connect()
+            except dbus.exceptions.DBusException as e:
+                ename = e.get_dbus_name() 
+                emsg = e.get_dbus_message()
+                estr = '{}:{}'.format(ename, emsg) 
+                                             
+                if ename == 'org.bluez.Error.AlreadyConnected':
+                    return self
+                elif ename == 'org.bluez.Error.Failed' \
+                        and emsg == 'Operation already in progress':
+                    pass
+                elif ename == 'org.bluez.Error.InProgress':
+                    # could occur if other process started a connection
+                    raise RuntimeError(estr)
+                else:
+                    raise RuntimeError(estr)
 
         if not self._evtConnect.wait(timeout):
             raise TimeoutError('Device connect timeout!')
 
-        # if errorMsg is not None:
-            # raise RuntimeError(' '.join(errorMsg)) # raise in caller thread
+        if dbuserr is not None:
+            estr = '{}:{}'.format(dbuserr.get_dbus_name(), dbuserr.get_dbus_message()) 
+            raise RuntimeError(estr) # raise in caller thread
 
+        # while not self.isConnected:
+            # print_dbg('Wait on connect')
+            # time.sleep(0.5)
+
+        print_dbg(self, 'Connected')
         return self
 
     def disconnect(self, timeout=TIMEOUT_SEC):
@@ -744,6 +776,7 @@ class Device(object):
         self._ifDev.Disconnect()
         if not self._evtDisconnect.wait(timeout):
             raise TimeoutError('Timeout waiting to disconnect from device!')
+        print_dbg(self, 'Disconnected')
 
 
     def _discover(self, uuid=None):
