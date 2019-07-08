@@ -27,7 +27,7 @@ def print_dbg(*args):
     _logger.debug(' '.join(str(a) for a in args))
 
 def die(*args, **kwargs):
-    print('ERROR:', *args, file=sys.stderr, **kwargs)
+    print('E:', *args, file=sys.stderr, **kwargs)
     exit(1)
 
 def get_device(args, cached=True):
@@ -40,7 +40,7 @@ def get_device(args, cached=True):
 
     else:
         addr = args.address # crash later if invalid format
-        devs = bblogger.devices(addr=addr, 
+        devs = bblogger.devices(address=addr, 
                 cached=cached)#, timeout=args.timeout)
 
     if len(devs) == 0:
@@ -50,29 +50,31 @@ def get_device(args, cached=True):
         return die('More then one berry found. Which one of the following to \
                 use?', devs)
 
-   
     dev = devs[0]
-    print('Using:', dev.addr, dev.name) 
+    print('Using:', dev.address, dev.name) 
     return dev
 
 def unlock_device(dev, password):
     ''' assume device to be connected '''
     if dev.pw_required():
         if password is None:
-            return die('Password required for device', dev.addr)
-        dev.pw_unlock(args.password)
+            return die('Password required for device', dev.address)
+        dev.pw_unlock(password)
 
 def do_scan(args):
     devs = bblogger.devices(cached=True)
     for dev in devs:
-        print(dev.addr, dev.name)
+        print(dev.address, dev.name)
 
 def do_blink(args):
-    with get_device(args) as dev:
-        #password not needed for blink
-        for n in range(0, args.num):
-            print(dev.addr, dev.name, 'blinking..')
-            dev.blinkLED()
+    #password not needed for blink
+    try:
+        with get_device(args) as dev:
+            for n in range(0, args.num):
+                print(dev.address, dev.name, 'blinking..')
+                dev.blinkLED()
+    except TimeoutError as e:
+        die(e)
 
 def do_config_write(args):
     toBool = lambda s: BOOL_CHOICES_DICT[s]
@@ -86,9 +88,12 @@ def do_config_write(args):
         confd[k] = v
 
     print_dbg(confd)
-    with get_device(args) as dev:
-        unlock_device(dev, args.password)
-        dev.config_write(**confd)
+    try:
+        with get_device(args) as dev:
+            unlock_device(dev, args.password)
+            dev.config_write(**confd)
+    except TimeoutError as e:
+        die(e)
 
 def do_config_read(args):
     
@@ -96,8 +101,11 @@ def do_config_read(args):
         assert(_v is not None)
         return 'on' if _v else 'off'
     # password not needed for read
-    with get_device(args) as dev:
-        conf = dev.config_read()
+    try:
+        with get_device(args) as dev:
+            conf = dev.config_read()
+    except TimeoutError as e:
+        die(e)
 
     printkv = lambda _k, _v: print('  ', _k.ljust(12), ':', _v)
     k = 'logging'
@@ -140,12 +148,13 @@ def do_config_password(args):
         disable = True
     else:
         disable = False
-
+    
+    done = False
     while True:
-        devs = bblogger.devices(addr=addr, 
-                    cached=False)
+        devs = bblogger.devices(address=addr, cached=False)
+
         if len(devs) == 0:
-            print('No device with addr', addr, 'found. Insert battery!? Retrying...')
+            print('No device with matching addr found. Insert battery!? Retrying...')
             sleep(1)
             continue
 
@@ -157,23 +166,32 @@ def do_config_password(args):
             if disable:
                 if rc in (bblogger.PW_STATUS_INIT, bblogger.PW_STATUS_DISABLED):
                     print('Password protection is disabled')
-                    return
+                else:
+                    print('Please power cycle device and password protection will be disabled')
+                done = True
             else:
                 if rc == bblogger.PW_STATUS_INIT:
                     dev.pw_set(args.password)
                     print('Password protection enabled')
-                    return
+                    done = True
                 else:
                     print('Device not in init mode. Please power cycle device')
-                    sleep(1)
-                    continue
+
             dev.disconnect()
 
         except TimeoutError as e:
-            print('Failed to connect, retrying...')
-            sleep(1)
+            print('Failed to connect or write, retrying...')
+
         except KeyboardInterrupt:
-            print('Aborted')
+            die('Aborted')
+
+        if done:
+            break
+        else:
+            sleep(1)
+
+                    
+
 
             
 
@@ -185,16 +203,23 @@ def do_fetch(args):
     else:
         ofile = open(args.file, 'w')
         #raise NotImplementedError('TODO open file, check exists etc') # TODO
+    errmsg = None
+    try:
+        with get_device(args) as dev:
+            unlock_device(dev, args.password)
+            dev.fetch(rtd=args.rtd, 
+                    nentries=args.num,
+                    ofmt=args.fmt,
+                    ofile=ofile)
+    except TimeoutError as e:
+        errmsg = str(e)
 
-    with get_device(args) as dev:
-        unlock_device(dev, args.password)
-        dev.fetch(rtd=args.rtd, 
-                nentries=args.num,
-                ofmt=args.fmt,
-                ofile=ofile)
+    finally:
+        if ofile not in (sys.stdout, sys.stderr): # or use not ofile.isatty():
+            ofile.close()
 
-    if ofile not in (sys.stdout, sys.stderr): # or use not ofile.isatty():
-        ofile.close()
+    if errmsg is not None:
+        die(errmsg)
 
 
 def set_verbosity(level):
@@ -280,6 +305,7 @@ def main():
     # ---- CONFIG-PASSWORD ---------------------------------------------------
 
     sp = subparsers.add_parser('config-password', #'config-pw',
+            aliases=['config-pw'],
             description='set (new) disable password. \
             requires device power cycle. empty password to disable')
     sp.set_defaults(_actionfunc=do_config_password)

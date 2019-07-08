@@ -69,9 +69,15 @@ def _dbus2py(data):
     '''
     if isinstance(data, dbus.String):
         data = str(data)
+    elif isinstance(data, dbus.ByteArray):
+        data = bytearray(data)
     elif isinstance(data, dbus.Boolean):
         data = bool(data)
-    elif isinstance(data, dbus.Int64):
+    elif isinstance(data, dbus.Byte):
+        data = int(data)
+    elif isinstance(data, (dbus.Int16, dbus.Int32, dbus.Int64)):
+        data = int(data)
+    elif isinstance(data, (dbus.UInt16, dbus.UInt32, dbus.UInt64)):
         data = int(data)
     elif isinstance(data, dbus.Double):
         data = float(data)
@@ -194,7 +200,7 @@ class Adapter(object):
             lambda dev: myuuid in dev.advertised
 
             # match address (not supported on MacOS)
-            lambda dev: dev.addr == ble.Address()
+            lambda dev: dev.address == ble.Address()
 
             # print devices (once) when discovered 
             lambda dev: not print(dev)
@@ -218,7 +224,6 @@ class Adapter(object):
             self._power_on()
 
         attempts = 0
-        maxAttempts = 6
         tstart = time.time()
 
         try:
@@ -229,22 +234,23 @@ class Adapter(object):
             while True:
                 for obj in _gp.getDBusIfObjects(_IF_DEVICE):
                     device = Device(obj) 
-                    devaddr = device.addr 
+                    devaddr = device.address 
 
                     if devaddr in alldevices:
                         continue
                     alldevices[devaddr] = True
+
+                    print_dbg('scan/discovery found device', devaddr)
 
                     if devfilter is not None and devfilter(device):
                         devices[devaddr] = device
 
                 if timeout: 
                     if (time.time() - tstart) >= timeout:
+                        print_dbg('scan/discovery timeout')
                         break
 
                 attempts += 1
-                if attempts >= maxAttempts:
-                    break
 
                 # assumtion here that if one (present) device detected, other
                 # devices should also be in the list.
@@ -253,7 +259,6 @@ class Adapter(object):
 
                 time.sleep(0.1)
         finally:
-            # Make sure scanning is stopped before exiting.
             self._stopDiscovery()
 
         ttot = time.time() - tstart
@@ -646,7 +651,7 @@ class Device(object):
         self._byteorder = byteorder
 
     def __str__(self):
-        return '<Device {} {}>'.format(self.addr, self.name)
+        return '<Device {} {}>'.format(self.address, self.name)
         
     def __repr__(self):
         return str(self)
@@ -760,6 +765,7 @@ class Device(object):
             # time.sleep(0.5)
 
         print_dbg(self, 'Connected')
+        print_dbg(self, self._properties())
         return self
 
     def disconnect(self, timeout=TIMEOUT_SEC):
@@ -847,7 +853,7 @@ class Device(object):
         return [] if uuids is None else [UUID(str(x)) for x in uuids]
 
     @property
-    def addr(self):
+    def address(self):
         return self._ifProp.Get(_IF_DEVICE, 'Address')
 
     @property

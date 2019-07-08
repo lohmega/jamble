@@ -5,7 +5,7 @@ import logging
 logging.basicConfig(stream=stderr, level=logging.DEBUG,
         format='%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
-_logger.setLevel(logging.ERROR)
+#_logger.setLevel(logging.ERROR)
 #_logger.setLevel(logging.DEBUG)
 
 

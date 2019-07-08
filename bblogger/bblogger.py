@@ -372,7 +372,7 @@ class BlueBerryLogger(object):
         print_dbg('logEP', pprint.pformat(self._cLogData._properties()))
 
 
-    def diconnect(self):
+    def disconnect(self):
         self._bleDev.disconnect()
 
     @property
@@ -400,8 +400,8 @@ class BlueBerryLogger(object):
         self._cInterval.write(sec, ctype='uint32')
 
     @property
-    def addr(self): 
-        return self._bleDev.addr
+    def address(self): 
+        return self._bleDev.address
 
     @property
     def name(self): 
@@ -532,13 +532,13 @@ class BlueBerryLogger(object):
 def versions():
     return ble.versions()
 
-def devices(addr=None, cached=False, output=None):
+def devices(address=None, cached=False, output=None):
     adapter = ble.Adapter()
-    if addr is not None:
-        #addr = ble.Address(addr)
+    if address is not None:
+        #address = ble.Address(address)
         def devicefilter(dev):
-            #print(dev.addr, addr, dev.addr == addr)
-            return dev.addr == addr
+            #print(dev.address, address, dev.address == address)
+            return dev.address == address
     else:
         def devicefilter(dev):
             print_dbg('----- DEVICE ----\n',
