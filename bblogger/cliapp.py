@@ -62,7 +62,7 @@ def unlock_device(dev, password):
         dev.pw_unlock(password)
 
 def do_scan(args):
-    devs = bblogger.devices(cached=True)
+    devs = bblogger.devices(cached=False)
     for dev in devs:
         print(dev.address, dev.name)
 
@@ -243,7 +243,7 @@ def main():
             ##action=_HelpAction, 
             action='store_true',
             #default=argparse.SUPPRESS,
-            default=False,
+            #default=False,
             help='show this help message and exit')
 
     # ---- BLINK -------------------------------------------------------------
@@ -329,7 +329,7 @@ def main():
             help='Max number of data points or log entries to fetch')
     sps.append(sp)
 
-
+    # same flags added for all positionals. 
     for sp in sps:
         # TODO
         sp.add_argument('--password', '--pw',
@@ -357,6 +357,8 @@ def main():
 
         parser.exit()
 
+    if 'verbose' not in args:
+        args.verbose = 0
     set_verbosity(args.verbose)
 
     print_dbg(args)
@@ -364,7 +366,8 @@ def main():
     print_dbg('----- VERSIONS ----\n',
             pprint.pformat(bblogger.versions()))
 
-    args._actionfunc(args)
+    if '_actionfunc' in args:
+        args._actionfunc(args)
 
 
 if __name__ == '__main__':

@@ -478,7 +478,15 @@ class BlueBerryLogger(object):
               stord on device.
 
         '''
-        c = self._cRtData if rtd else self._cLogData
+
+        # realtime data not readable if logging is off/disabled
+        if rtd:
+            if not self._logging:
+                print_err('can not read realtime data while logging disabled.')
+                return
+            c = self._cLogData
+        else:
+            c = self._cRtData
 
         bbld = BlueBerryLoggerDeserializer(ofmt=ofmt, ofile=ofile)
 
@@ -510,7 +518,7 @@ class BlueBerryLogger(object):
 
 
     def pw_unlock(self, pw):
-        pw_set(pw)
+        self.pw_set(pw)
 
     def pw_required(self):
         ''' is password requried for this device''' 
