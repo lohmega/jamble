@@ -1,20 +1,29 @@
-import bblogger
+
+import logging
+import asyncio
 import sys
 import argparse
 import logging
-import pprint
-from time import sleep
 
-BOOL_CHOICES_DICT = { 'on':True, 'off':False}
-BOOL_CHOICES = BOOL_CHOICES_DICT.keys()
+from uuid import UUID
 
-SENSOR_NAMES = list(bblogger._sensors.keys())
-CONFIG_FIELDS = list(SENSOR_NAMES) # "new"
-CONFIG_FIELDS.extend(['logging', 'interval'])
+# not needed in python >= 3.6? as default dict keeps order
+from collections import OrderedDict
+from bblogger import BlueBerryLoggerDeserializer, SENSORS, UUIDS
+
+from bleak import BleakClient, discover
+from bleak import _logger as bleak_logger
+from bleak import __version__ as bleak_version
+
+
 
 logging.basicConfig(stream=sys.stderr, level=logging.ERROR,
         format='%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
+
+bleak_logger.setLevel(logging.ERROR)
+log = logging.getLogger(__name__)
+
 
 #wrap logger to behave like print. i.e. automatic conversion to string
 def print_wrn(*args):
@@ -30,210 +39,248 @@ def die(*args, **kwargs):
     print('E:', *args, file=sys.stderr, **kwargs)
     exit(1)
 
-def get_device(args, cached=True):
 
-    if args.address is None:
-        return die('No address')
+PW_STATUS_INIT       = 0x00 
+PW_STATUS_UNVERIFIED = 0x01
+PW_STATUS_VERIFIED   = 0x02 
+PW_STATUS_DISABLED   = 0x03
 
-    if args.address == '0': # i.e. use first detected
-        devs = bblogger.devices(cached=cached)
+def pw_status_to_str(rc):
+    rctranslate = {
+        0x00 : 'init', #'the unit has not been configured yet',
+        0x01 : 'unverified', #'the correct password has not been entered yet',
+        0x02 : 'verified', #'the correct password has been entered',
+        0x03 : 'disabled', #'no password is needed',
+    }
+    return rctranslate[rc]
+ 
 
-    else:
-        addr = args.address # crash later if invalid format
-        devs = bblogger.devices(address=addr, 
-                cached=cached)#, timeout=args.timeout)
+class BlueBerryLogger(BleakClient):
 
-    if len(devs) == 0:
-        return die('No devices found')
+    async def write_u32(self, cuuid, val):
+        val = int(val)
+        data = val.to_bytes(size, byteorder='little', signed=False)
+        await self.write_gatt_char(cuuid, data, response=True)
 
-    elif len(devs) > 1:
-        return die('More then one berry found. Which one of the following to \
-                use?', devs)
+    async def read_u32(self, cuuid):
+        ba = await self.read_gatt_char(cuuid)
+        assert(len(ba) == 4)
+        return int.from_bytes(ba, byteorder='little', signed=False)
 
-    dev = devs[0]
-    print('Using:', dev.address, dev.name) 
-    return dev
+    async def cmd(self, txdata, rxsize=None):
+        ''' first byte in txdata is the cmd id '''
+        txuuid = UUIDS.C_CMD_TX
+        rxuuid = UUIDS.C_CMD_RX 
 
-def unlock_device(dev, password):
-    ''' assume device to be connected '''
-    if dev.pw_required():
-        if password is None:
-            return die('Password required for device', dev.address)
-        dev.pw_unlock(password)
+        txdata = bytearray(txdata)
+        rxdata = bytearray()
+        if not rxsize:
+            return await self.write_gatt_char(txuuid, txdata, response=True)
 
-def do_scan(args):
-    devs = bblogger.devices(cached=args.cached)
-    for dev in devs:
-        print(dev.address, dev.name)
+        event = asyncio.Event()
+        def response_handler(sender, data):
+            # sender is str. should be uudi!?
+            if sender !=  str(rxuuid):
+                print_dbg('unexpected notify response from', 
+                        sender, 'expected', rxuuid)
+                return
+            rxdata.extend(data)
+            print_dbg('cmd RXD:', sender, data)
+            event.set()
 
-def do_blink(args):
-    #password not needed for blink
-    try:
-        with get_device(args) as dev:
-            for n in range(0, args.num):
-                print(dev.address, dev.name, 'blinking..')
-                dev.blinkLED()
-    except TimeoutError as e:
-        die(e)
 
-def do_config_write(args):
-    toBool = lambda s: BOOL_CHOICES_DICT[s]
-    argsd = vars(args)
-    confd = {}
-    for k, v in argsd.items():
-        if k not in CONFIG_FIELDS:
-            continue
-        if v is None:
-            continue
-        confd[k] = v
+        await self.start_notify(rxuuid, response_handler)
+        await self.write_gatt_char(txuuid, txdata, response=True)
+        await event.wait()
+        await self.stop_notify(rxuuid)
+        await asyncio.sleep(2)
+        print_dbg('cmd RXD:', rxdata)
 
-    print_dbg(confd)
-    try:
-        with get_device(args) as dev:
-            unlock_device(dev, args.password)
-            dev.config_write(**confd)
-    except TimeoutError as e:
-        die(e)
+        assert(len(rxdata) == rxsize)
 
-def do_config_read(args):
-    
-    def toOnOff(_v):
-        assert(_v is not None)
-        return 'on' if _v else 'off'
-    # password not needed for read
-    try:
-        with get_device(args) as dev:
-            conf = dev.config_read()
-    except TimeoutError as e:
-        die(e)
+        if rxsize and rxdata[0] != (txdata[0] | 0x80):
+            raise RuntimeError('Unexpected cmd id in respone')
 
-    printkv = lambda _k, _v: print('  ', _k.ljust(12), ':', _v)
-    k = 'logging'
-    printkv(k, toOnOff(conf.pop(k)))
+        return rxdata
 
-    k = 'interval'
-    printkv(k, conf.pop(k))
+    async def pw_status(self):
+        ''' password status '''
+        rsp = await self.cmd([0x07], 2)
+        rc = rsp[1]
+        return rc
 
-    k = 'pwstatus'
-    printkv(k, conf.pop(k))
+    async def connect_and_unlock(self, args):
+        x = await self.is_connected()
+         
+        rc = await self.pw_status()
+        if rc != PW_STATUS_UNVERIFIED:
+            return # no password needed
 
-    # "on|off" values
-    for k in sorted(conf.keys()):
-        v = toOnOff(conf[k])
-        printkv(k, v)
+        if 'password' not in args:
+            die('Password needed for this device')
 
-def have_config_field(args):
-    argsd = vars(args)
-    for k, v in argsd.items():
-        if v is None:
-            continue
-        if k in CONFIG_FIELDS:
-            return True
-    return False
+        await self.pw_write(args.password)
 
-def do_config(args):
-    if have_config_field(args):
-        do_config_write(args)
-    else:
-        do_config_read(args)
 
-def do_config_password(args):
-    # TODO verify oasswird format first
-    addr = args.address
-
-    if addr is None or addr == '0':
-        return die('Address is required when setting password') 
-            
-    if args.password is None or len(args.password) == 0:
-        disable = True
-    else:
-        disable = False
-    
-    done = False
-    while True:
-        devs = bblogger.devices(address=addr, cached=False)
-
-        if len(devs) == 0:
-            print('No device with matching addr found. Insert battery!? Retrying...')
-            sleep(1)
-            continue
-
-        assert(len(devs) == 1)
-        dev = devs[0]
+    async def pw_write(self, s):
+        ''' if pw_status is "init", set new password, 
+        if pw_status="unverified", unlock device
+        '''
+        emsg = 'Password must be 8 chars and ascii only'
+        data = bytearray([0x06]) ## 0x06 = command code 
         try:
-            dev.connect()
-            rc, s = dev.pw_status()
-            if disable:
-                if rc in (bblogger.PW_STATUS_INIT, bblogger.PW_STATUS_DISABLED):
-                    print('Password protection is disabled')
-                else:
-                    print('Please power cycle device and password protection will be disabled')
-                done = True
-            else:
-                if rc == bblogger.PW_STATUS_INIT:
-                    dev.pw_set(args.password)
-                    print('Password protection enabled')
-                    done = True
-                else:
-                    print('Device not in init mode. Please power cycle device')
+            pwdata = bytearray(s.encode('ascii'))
+        except UnicodeDecodeError:
+            raise TypeError(emsg)
+        if len(pwdata) != 8:
+            raise TypeError(emsg)
+        data.extend(pwdata)
+        await self.cmd(data)
 
-            dev.disconnect()
-
-        except TimeoutError as e:
-            print('Failed to connect or write, retrying...')
-
-        except KeyboardInterrupt:
-            die('Aborted')
-
-        if done:
-            break
-        else:
-            sleep(1)
-
-                    
-
-
-            
-
-
-def do_fetch(args):
     
+    async def pw_status(self):
+        ''' password status '''
+        rsp = await self.cmd([0x07], 2)
+        return rsp[1]
+
+async def do_scan(loop, args):
+    devices = await discover()
+    for d in devices:
+        if not 'BlueBerry' in d.name:
+            print_dbg('ignoring:', d)
+            continue
+       
+        print(d.address, '  ', d.rssi, 'dBm', '  ', d.name)
+        continue
+
+        #TODO check advertised service UUID:s
+        # is_blueberry = False
+        # client = BleakClient(d.address, loop=loop)
+        # services = await client.get_services()
+        # for service in services:
+            # print(service.uuid, "=", UUIDS.S_LOG)
+            # continue
+            # if service.uuid in [UUIDS.S_LOG]:
+                # is_blueberry = True
+                # break
+
+
+
+async def do_blink(loop, args):
+    async with BlueBerryLogger(args.address, loop=loop) as bbl:
+        x = await bbl.is_connected()
+        await bbl.cmd([0x01])
+
+
+async def do_config_read(loop, args):
+
+    def to_onoff(x):
+        return 'on' if x else 'off'
+
+    conf = OrderedDict()
+    async with BlueBerryLogger(args.address, loop=loop) as bbl:
+        x = await bbl.is_connected()
+
+        val = await bbl.read_u32(UUIDS.C_CFG_LOG_ENABLE)
+        conf['logging'] = to_onoff(val)
+
+        conf['interval'] = await bbl.read_u32(UUIDS.C_CFG_INTERVAL)
+
+        val = await bbl.pw_status()
+        conf['pwstatus'] = '{} ({})'.format(val, pw_status_to_str(val))
+
+        enbits = await bbl.read_u32(UUIDS.C_CFG_SENSOR_ENABLE)
+        for name, s in SENSORS.items():
+            conf[s.apiName] = to_onoff(s.enmask & enbits)
+
+    for k, v in conf.items(): 
+        print('  ', k.ljust(10), ':', v)
+
+async def do_config_write(loop, args):
+    logging = None
+    interval = None
+    setMask = 0
+    clrMask = 0
+
+    # sanity check all params before write
+    argsd = vars(args)
+    for k, v in argsd.items():
+        if v is None:
+            continue
+
+        if k in SENSORS:
+            enmask = SENSORS[k].enmask 
+            if v:
+                setMask |= enmask
+            else:
+                clrMask |= enmask
+        else:
+            print_dbg('Ignoring unknown conifg field "{}"'.format(k))
+        
+    async with BlueBerryLogger(args.address, loop=loop) as bbl:
+        await bbl.connect_and_unlock(args)
+        if logging is not None:
+            await bbl.write_u32(UUIDS.C_CFG_LOG_ENABLE, logging)
+
+        if interval is not None:
+            await bbl.write_u32(UUIDS.C_CFG_INTERVAL, interval)
+
+        cuuid = UUIDS.C_CFG_SENSOR_ENABLE
+        if setMask or clrMask:
+            enMaskOld = await bbl.read_u32(cuuid)
+            enMaskNew = (enMaskOld & ~clrMask) | setMask
+            print_dbg(self, 
+                    'enabled sensors old=0x{:04X}, new=0x{:04X}'.format(enMaskOld, enMaskNew))
+            await bbl.write_u32(cuuid, enMaskNew)
+
+
+async def do_config_password(loop, args):
+    pass
+
+async def do_fetch(loop, args):
+
+    if args.rtd:    
+        uid = UUIDS.C_SENSORS_RTD
+    else:
+        uid = UUIDS.C_SENSORS_LOG
     if args.file is None:
         ofile = sys.stdout
     else:
         ofile = open(args.file, 'w')
-        #raise NotImplementedError('TODO open file, check exists etc') # TODO
-    errmsg = None
-    try:
-        with get_device(args) as dev:
-            unlock_device(dev, args.password)
-            dev.fetch(rtd=args.rtd, 
-                    nentries=args.num,
-                    ofmt=args.fmt,
-                    ofile=ofile)
-    except TimeoutError as e:
-        errmsg = str(e)
+        #TODO open file, check exists etc
 
-    finally:
-        if ofile not in (sys.stdout, sys.stderr): # or use not ofile.isatty():
-            ofile.close()
+    bbld = BlueBerryLoggerDeserializer(ofmt=args.fmt, ofile=ofile)
+    nentries = args.num
 
-    if errmsg is not None:
-        die(errmsg)
+    event = asyncio.Event()
+    def response_handler(sender, data):
+        if sender !=  str(uid):
+            print_dbg('unexpected notify response from', 
+                    sender, 'expected', uid)
+            return
+
+        done = bbld.putb(data)
+        if not done and nentries is not None:
+            done = bbld.msgCount >= nentries
+        if done:
+            print_dbg('End of log. Fetched', bbld.msgCount, 'entries')
+            event.set()
+
+    async with BleakClient(args.address, loop=loop) as client:
+        x = await client.is_connected()
+        if args.rtd:    
+            enabled = await bbl.read_u32(UUIDS.C_CFG_LOG_ENABLE)
+            if not enabled:
+                die('logging must be enabled for real-time data (rtd)')
+
+        await client.start_notify(uid, response_handler)
+        await event.wait()
+        await client.stop_notify(uid)
 
 
-def set_verbosity(level):
-    if level <= 0:
-       #level = logging.NOTSET
-       level = logging.WARNING
-    else:
-        level = logging.DEBUG
-    logging.getLogger().setLevel(level)
-    _logger.setLevel(level)
 
 
-
-def main():
+def parse_args():
     parser = argparse.ArgumentParser(description='',
             add_help=False)
     subparsers = parser.add_subparsers()
@@ -245,6 +292,10 @@ def main():
             #default=argparse.SUPPRESS,
             #default=False,
             help='show this help message and exit')
+
+    parser.add_argument('--version',
+            action='store_true',
+            help='show version info and exit')
 
     # ---- BLINK -------------------------------------------------------------
     sp = subparsers.add_parser('blink', 
@@ -259,11 +310,6 @@ def main():
     # ---- SCAN --------------------------------------------------------------
     sp = subparsers.add_parser('scan', 
             description='Show list of BlueBerry logger devices')
-
-    sp.add_argument('--cached', '-c',
-           action='store_true',
-           default=False, 
-           help='Show system cached BLE devices. faster but possible incorrect')
     sp.set_defaults(_actionfunc=do_scan)
     sps.append(sp)
 
@@ -275,11 +321,12 @@ def main():
 
 
     # ---- CONFIG WRITE ------------------------------------------------------
+    BOOL_CHOICES = { 'on':True, 'off':False}
     def onoffbool(s):
-        if s not in BOOL_CHOICES_DICT:
-            msg = 'Valid options are {}'.format(BOOL_CHOICES_DICT.keys())
+        if s not in BOOL_CHOICES:
+            msg = 'Valid options are {}'.format(BOOL_CHOICES.keys())
             raise argparse.ArgumentTypeError(msg)
-        return BOOL_CHOICES_DICT[s]
+        return BOOL_CHOICES[s]
 
     sp = subparsers.add_parser('config-write', 
             description='configure device')
@@ -287,12 +334,13 @@ def main():
     cfa = sp.add_argument_group('Config fields', 
             description='show config if none provided')
     #gsensors = sp.add_mutually_exclusive_group()
-    for s in SENSOR_NAMES:
+
+    sensor_names = list(SENSORS.keys())
+    for s in sensor_names:
         cfa.add_argument('--{}'.format(s), 
                 #'-{}'.format(s.symbol), 
                 metavar='ONOFF', 
                 type=onoffbool,
-                #choices=BOOL_CHOICES,
                 help='sensor on|off')
 
     # cfa.add_argument('--all', 
@@ -304,7 +352,6 @@ def main():
     cfa.add_argument('--logging', 
             type=onoffbool,
             metavar='ONOFF', 
-            #choices=BOOL_CHOICES,
             help='Logging (global) on|off (sensor data stored)')
 
     cfa.add_argument('--interval', type=int, 
@@ -352,6 +399,11 @@ def main():
         # sp.add_argument('--timeout', 
                 # type=int, 
                 # help='Timeout in seconds. useful for batch jobs')
+        sp.add_argument('--debug',
+               action='store_true',
+               default=False, 
+               help='Extra debug output')
+
         sp.format_help()
 
     args = parser.parse_args()
@@ -366,16 +418,58 @@ def main():
 
     if 'verbose' not in args:
         args.verbose = 0
-    set_verbosity(args.verbose)
+
+    if 'debug' not in args:
+        args.debug = False
+
+    return args
+
+def print_versions():
+    import platform
+
+    print('bleak:', bleak_version)
+    print('os:', platform.platform())
+    print('python:', platform.python_version())
+
+    if platform.system() == 'Linux':
+        import subprocess
+        try:
+            s = subprocess.check_output(['bluetoothctl', '--version'])
+            s = s.decode('ascii').strip()
+        except (FileNotFoundError, subprocess.CalledProcessError) as e:
+            s = '??'
+        print('bluez:', s)
+
+
+def main():
+    args = parse_args()
+
+    level = args.verbose
+    if level <= 0:
+       #level = logging.NOTSET
+       level = logging.WARNING
+    else:
+        level = logging.DEBUG
+    logging.getLogger().setLevel(level)
+    _logger.setLevel(level)
 
     print_dbg(args)
 
-    print_dbg('----- VERSIONS ----\n',
-            pprint.pformat(bblogger.versions()))
+    if args.version: 
+        print_versions()
+        exit(0)
+
+    if args.debug:
+        #import os
+        #os.environ["PYTHONASYNCIODEBUG"] = str(1)
+        print('----- VERSIONS ----')
+        print_versions()
 
     if '_actionfunc' in args:
-        args._actionfunc(args)
+        loop = asyncio.get_event_loop()
+        loop.run_until_complete(args._actionfunc(loop, args))
 
 
 if __name__ == '__main__':
     main()
+
