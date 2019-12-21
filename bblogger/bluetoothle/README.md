@@ -76,6 +76,11 @@ hciconfig hci0 up|down
 btmgmt le on
 ```
 
+get rssi
+```
+sudo btmgmt find 
+```
+
 hcitool and gatttool
 --------------------
 

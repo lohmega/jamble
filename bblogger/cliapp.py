@@ -62,7 +62,7 @@ def unlock_device(dev, password):
         dev.pw_unlock(password)
 
 def do_scan(args):
-    devs = bblogger.devices(cached=False)
+    devs = bblogger.devices(cached=args.cached)
     for dev in devs:
         print(dev.address, dev.name)
 
@@ -247,7 +247,6 @@ def main():
             help='show this help message and exit')
 
     # ---- BLINK -------------------------------------------------------------
-
     sp = subparsers.add_parser('blink', 
             description='Blink LED on device for physical identification')
     sp.set_defaults(_actionfunc=do_blink)
@@ -258,23 +257,33 @@ def main():
     sps.append(sp)
 
     # ---- SCAN --------------------------------------------------------------
-
     sp = subparsers.add_parser('scan', 
             description='Show list of BlueBerry logger devices')
+
+    sp.add_argument('--cached', '-c',
+           action='store_true',
+           default=False, 
+           help='Show system cached BLE devices. faster but possible incorrect')
     sp.set_defaults(_actionfunc=do_scan)
     sps.append(sp)
 
-    # ---- CONFIG WRITE ------------------------------------------------------
+    # ---- CONFIG READ ------------------------------------------------------
+    sp = subparsers.add_parser('config-read', 
+            description='configure device')
+    sp.set_defaults(_actionfunc=do_config_read)
+    sps.append(sp)
 
+
+    # ---- CONFIG WRITE ------------------------------------------------------
     def onoffbool(s):
         if s not in BOOL_CHOICES_DICT:
             msg = 'Valid options are {}'.format(BOOL_CHOICES_DICT.keys())
             raise argparse.ArgumentTypeError(msg)
         return BOOL_CHOICES_DICT[s]
 
-    sp = subparsers.add_parser('config', 
-            description='configure or show configuration')
-    sp.set_defaults(_actionfunc=do_config)
+    sp = subparsers.add_parser('config-write', 
+            description='configure device')
+    sp.set_defaults(_actionfunc=do_config_write)
     cfa = sp.add_argument_group('Config fields', 
             description='show config if none provided')
     #gsensors = sp.add_mutually_exclusive_group()
@@ -303,7 +312,6 @@ def main():
     sps.append(sp)
 
     # ---- CONFIG-PASSWORD ---------------------------------------------------
-
     sp = subparsers.add_parser('config-password', #'config-pw',
             aliases=['config-pw'],
             description='set (new) disable password. \
@@ -312,7 +320,6 @@ def main():
     sps.append(sp)
 
     # ---- FETCH -------------------------------------------------------------
-
     sp = subparsers.add_parser('fetch', # parents=[parser],
             description='Fetch sensor data')
     sp.set_defaults(_actionfunc=do_fetch)
@@ -329,7 +336,7 @@ def main():
             help='Max number of data points or log entries to fetch')
     sps.append(sp)
 
-    # same flags added for all positionals. 
+    # same flags added for all positionals above
     for sp in sps:
         # TODO
         sp.add_argument('--password', '--pw',
