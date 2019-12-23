@@ -1,11 +1,10 @@
 
+import logging
+from sys import stderr, stdout
+import csv
 from uuid import UUID
-import sys
 
 import bb_log_entry_pb2
-import argparse
-import logging
-import csv
 
 # not needed in python >= 3.6? as default dict keeps order
 from collections import OrderedDict
@@ -21,7 +20,7 @@ except ImportError:
         tmpjs = MessageToJson(pb)
         return json.loads(tmpjs)
 
-logging.basicConfig(stream=sys.stderr, level=logging.ERROR,
+logging.basicConfig(stream=stderr, level=logging.ERROR,
         format='%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
 
@@ -49,11 +48,21 @@ CMD_RESP_CODES = {
     0x82 : 'PROGRESS'
 }
     
+class PW_STATUS():
+    INIT       = 0x00 
+    UNVERIFIED = 0x01
+    VERIFIED   = 0x02 
+    DISABLED   = 0x03
 
-PW_STATUS_INIT       = 0x00 
-PW_STATUS_UNVERIFIED = 0x01
-PW_STATUS_VERIFIED   = 0x02 
-PW_STATUS_DISABLED   = 0x03
+PW_STATUS_TRANSLATE = {
+    0x00 : 'init', #'the unit has not been configured yet',
+    0x01 : 'unverified', #'the correct password has not been entered yet',
+    0x02 : 'verified', #'the correct password has been entered',
+    0x03 : 'disabled', #'no password is needed',
+}
+
+def pw_status_to_str(rc):
+    return PW_STATUS_TRANSLATE[rc]
 
 def _bbuuid(n):
     base='c9f6{:04x}-9f9b-fba4-5847-7fd701bf59f2'
@@ -164,7 +173,7 @@ class BlueBerryLoggerDeserializer(object):
     reads a stream of protobuf data with the format 
     <len><protobuf message of size len><len>,...
     '''
-    def __init__(self, ofile=sys.stdout, ofmt='txt', raw=False):
+    def __init__(self, ofile=stdout, ofmt='txt', raw=False):
         self._pb = bb_log_entry_pb2.bb_log_entry() # protobuf message
         self._bytes = bytearray()
         self._entries = []
