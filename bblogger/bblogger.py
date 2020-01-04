@@ -2,7 +2,10 @@
 import logging
 from sys import stderr, stdout
 import csv
-from uuid import UUID
+
+# temporary fix as uuid not (yet) suported in bleak MacOS backend, only str works
+#from uuid import UUID
+UUID = lambda x: str(x)
 
 import bb_log_entry_pb2
 
@@ -20,8 +23,6 @@ except ImportError:
         tmpjs = MessageToJson(pb)
         return json.loads(tmpjs)
 
-logging.basicConfig(stream=stderr, level=logging.ERROR,
-        format='%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
 
 #wrap logger to behave like print. i.e. automatic conversion to string

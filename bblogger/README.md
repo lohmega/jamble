@@ -1,10 +1,17 @@
 
 Python module and command line tool to interact with Loligo BlueBerry Logger
 
-Examples
+Install
+=======
+
+`python3 -m pip install bleak protobuf`
+
+
+Usage example
+
 ```
 python3 ./cliapp.py fetch --rtd -n3 --address=EC:26:CD:58:DC:B0 
-python3 ./cliapp.py config-write --logging=on --address=EC:26:CD:58:DC:B0 
+python3 ./cliapp.py config-write --logging=on --address=EC:26:CD:58:DC:B0
 python3 ./cliapp.py config-read ---address=EC:26:CD:58:DC:B0
 
 
@@ -66,3 +73,4 @@ State of Bluetooth LE libs 2019 Q2
   crossplattform and mature but "project is not under active development"
   the BLE/GATT interface used is a fork of
   https://bitbucket.org/OscarAcena/pygattlib see above
+

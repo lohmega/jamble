@@ -4,7 +4,6 @@ import asyncio
 import sys
 import argparse
 
-from uuid import UUID
 
 # not needed in python >= 3.6? as default dict keeps order
 from collections import OrderedDict
@@ -18,12 +17,11 @@ from bleak import __version__ as bleak_version
 
 from bleak.exc import BleakError
 
-logging.basicConfig(stream=sys.stderr, level=logging.ERROR,
-        format='%(levelname)s: %(message)s')
+# logging.basicConfig(stream=sys.stderr, level=logging.ERROR,
+#        format='%(levelname)s: %(message)s')
 _logger = logging.getLogger(__name__)
 
-bleak_logger.setLevel(logging.ERROR)
-log = logging.getLogger(__name__)
+
 
 
 #wrap logger to behave like print. i.e. automatic conversion to string
@@ -122,7 +120,7 @@ async def bbl_connect(loop, args, unlock=False):
             if 'password' not in args:
                 await bbl.disconnect()
                 die('Password needed for this device and operation')
-            await self.pw_write(args.password)
+            await bbl.pw_write(args.password)
         else:
             pass # password not needed for this device
 
@@ -131,23 +129,23 @@ async def bbl_connect(loop, args, unlock=False):
 async def do_scan(loop, args):
     devices = await discover()
     for d in devices:
-        if not 'BlueBerry' in d.name:
+        match = False
+        if 'uuids' in d.metadata:
+            advertised = d.metadata['uuids']
+            suuid = str(UUIDS.S_LOG)
+            if suuid.lower() in advertised or suuid.upper() in advertised:
+                match = True
+            
+        elif 'BlueBerry' in d.name:
+            print_wrn('no mathcing service uuid but matching name:', d)
+            match = True
+        else:
             print_dbg('ignoring:', d)
-            continue
-       
-        print(d.address, '  ', d.rssi, 'dBm', '  ', d.name)
-        continue
 
-        #TODO check advertised service UUID:s
-        # is_blueberry = False
-        # client = BleakClient(d.address, loop=loop)
-        # services = await client.get_services()
-        # for service in services:
-            # print(service.uuid, "=", UUIDS.S_LOG)
-            # continue
-            # if service.uuid in [UUIDS.S_LOG]:
-                # is_blueberry = True
-                # break
+        if match:
+            print_dbg('details:', d.details, 'metadata:', d.metadata) 
+            print(d.address, '  ', d.rssi, 'dBm', '  ', d.name)
+
 
 async def do_blink(loop, args):
     assert(args.num > 0)
@@ -228,7 +226,7 @@ async def do_config_write(loop, args):
 async def do_set_password(loop, args):
     bbl = await bbl_connect(loop, args)
     rc = await bbl.pw_status()
-    if rc == bblogger.PW_STATUS.INIT:
+    if rc == PW_STATUS.INIT:
         bbl.pw_write(args.password)
         print_dbg('Password protection enabled')
     else:
@@ -254,7 +252,7 @@ async def do_fetch(loop, args):
 
     event = asyncio.Event()
     def response_handler(sender, data):
-        if sender !=  str(uid):
+        if str(sender).upper() !=  str(uid).upper():
             print_wrn('unexpected notify response from', 
                     sender, 'expected', uid)
             return
@@ -281,27 +279,59 @@ async def do_fetch(loop, args):
     await bbl.disconnect()
 
 
-
-
 def parse_args():
+    def p_password(s):
+        if s is None:
+            return None
+        msg = 'Password must be 8 chars and ascii only'
+        try:
+            ba = bytearray(s.encode('ascii'))
+        except UnicodeDecodeError:
+            raise argparse.ArgumentTypeError(msg)
+        if len(ba) != 8:
+            raise argparse.ArgumentTypeError(msg)
+        return ba
+
+    common = argparse.ArgumentParser(add_help=False)                                 
+    common.add_argument('--verbose', '-v', default=0, action='count',
+            help='Verbose output')
+
+    if 0: # TODO
+        common.add_argument('--timeout', 
+            type=int, 
+            help='Timeout in seconds. useful for batch jobs')
+
     parser = argparse.ArgumentParser(description='',
             add_help=False)
     subparsers = parser.add_subparsers()
     sps = []
 
     parser.add_argument('--help', '-h', 
-            ##action=_HelpAction, 
             action='store_true',
-            #default=argparse.SUPPRESS,
-            #default=False,
-            help='show this help message and exit')
+            help='Show this help message and exit')
 
     parser.add_argument('--version',
             action='store_true',
-            help='show version info and exit')
+            help='Show version info and exit')
+
+    # ---- SCAN --------------------------------------------------------------
+    sp = subparsers.add_parser('scan', 
+            parents = [common],
+            description='Show list of BlueBerry logger devices')
+    sp.set_defaults(_actionfunc=do_scan)
+    sps.append(sp)
+
+    # --- more common args for below commands -------------------------------
+    common.add_argument('--password', '--pw',
+            type=p_password,
+            default=None, help='Password to unlock (or lock) device')
+    common.add_argument('--address', '-a', 
+            metavar='ADDR', 
+            help='Bluetooth LE device address (or device UUID on MacOS)')
 
     # ---- BLINK -------------------------------------------------------------
     sp = subparsers.add_parser('blink', 
+            parents = [common],
             description='Blink LED on device for physical identification')
     sp.set_defaults(_actionfunc=do_blink)
 
@@ -310,14 +340,10 @@ def parse_args():
             help='Number of blinks')
     sps.append(sp)
 
-    # ---- SCAN --------------------------------------------------------------
-    sp = subparsers.add_parser('scan', 
-            description='Show list of BlueBerry logger devices')
-    sp.set_defaults(_actionfunc=do_scan)
-    sps.append(sp)
 
     # ---- CONFIG READ ------------------------------------------------------
     sp = subparsers.add_parser('config-read', 
+            parents = [common],
             description='configure device')
     sp.set_defaults(_actionfunc=do_config_read)
     sps.append(sp)
@@ -332,6 +358,7 @@ def parse_args():
         return BOOL_CHOICES[s]
 
     sp = subparsers.add_parser('config-write', 
+            parents = [common],
             description='configure device')
     sp.set_defaults(_actionfunc=do_config_write)
     cfa = sp.add_argument_group('Config fields', 
@@ -363,6 +390,7 @@ def parse_args():
 
     # ---- CONFIG-PASSWORD ---------------------------------------------------
     sp = subparsers.add_parser('set-password', #'config-pw',
+            parents = [common],
             aliases=['config-pw'],
             description='set (new) disable password. \
             requires device power cycle. empty password to disable')
@@ -371,6 +399,7 @@ def parse_args():
 
     # ---- FETCH -------------------------------------------------------------
     sp = subparsers.add_parser('fetch', # parents=[parser],
+            parents = [common],
             description='Fetch sensor data')
     sp.set_defaults(_actionfunc=do_fetch)
     sp.add_argument('--file', help='Data output file')
@@ -386,49 +415,13 @@ def parse_args():
             help='Max number of data points or log entries to fetch')
     sps.append(sp)
 
-    def p_password(s):
-        if s is None:
-            return None
-        msg = 'Password must be 8 chars and ascii only'
-        try:
-            ba = bytearray(s.encode('ascii'))
-        except UnicodeDecodeError:
-            raise argparse.ArgumentTypeError(msg)
-        if len(ba) != 8:
-            raise argparse.ArgumentTypeError(msg)
-        return ba
-
-    # same flags added for all positionals above
-    for sp in sps:
-        # TODO
-        sp.add_argument('--password', '--pw',
-                type=p_password,
-                default=None, help='Password to unlock (or lock) device')
-        sp.add_argument('--address', '-a', 
-                metavar='ADDR', 
-                help='BLE device address.')
-        sp.add_argument('--verbose', '-v', default=0, action='count',
-                help='Verbose output')
-        # sp.add_argument('--timeout', 
-                # type=int, 
-                # help='Timeout in seconds. useful for batch jobs')
-        sp.add_argument('--debug',
-               action='store_true',
-               default=False, 
-               help='Extra debug output')
-
-
-        #cfa.add_argument('--timeout', type=int, 
-        #        help='Timeout in seconds')
-        sp.format_help()
 
     args = parser.parse_args()
-
 
     if args.help:
         for sp in sps:
            print(sp.format_help())
-           print(sp.format_usage())
+           print() # extra linebreak
 
         parser.exit()
 
@@ -456,30 +449,47 @@ def print_versions():
             s = '??'
         print('bluez:', s)
 
+def set_verbose(verbose_level):
+    loggers = [logging.getLogger('bblogger'), _logger]
+
+    if verbose_level <= 0:
+        level = logging.WARNING
+    elif verbose_level == 2:
+        level = logging.INFO
+    elif verbose_level >= 3:
+        level = logging.DEBUG
+
+    if verbose_level >= 4:
+        bleak_logger = logging.getLogger('bleak')
+        bleak_logger.setLevel(logging.DEBUG)
+        loggers.append(bleak_logger)
+
+    # create logger
+    #_logger.setLevel(logging.DEBUG)
+
+    handler = logging.StreamHandler(sys.stderr)
+    handler.setLevel(level)
+    
+    #formatter = logging.Formatter('%(asctime)s [%(levelname)s] %(name)s: %(message)s')
+    formatter = logging.Formatter('%(levelname)s:%(name)s:%(lineno)d: %(message)s')
+    handler.setFormatter(formatter)
+
+    for l in loggers:
+        l.addHandler(handler)
+        l.setLevel(logging.DEBUG)
+
+    if verbose_level >= 3:
+        print_versions()
 
 def main():
     args = parse_args()
 
-    level = args.verbose
-    if level <= 0:
-       #level = logging.NOTSET
-       level = logging.WARNING
-    else:
-        level = logging.DEBUG
-    logging.getLogger().setLevel(level)
-    _logger.setLevel(level)
-
+    set_verbose(args.verbose)
     print_dbg(args)
 
     if args.version: 
         print_versions()
         exit(0)
-
-    if args.debug:
-        #import os
-        #os.environ["PYTHONASYNCIODEBUG"] = str(1)
-        print('----- VERSIONS ----')
-        print_versions()
 
     if '_actionfunc' in args:
         loop = asyncio.get_event_loop()
