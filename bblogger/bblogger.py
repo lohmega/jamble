@@ -2,6 +2,7 @@
 import logging
 from sys import stderr, stdout
 import csv
+import json
 
 # temporary fix as uuid not (yet) suported in bleak MacOS backend, only str works
 #from uuid import UUID
@@ -173,6 +174,9 @@ class BlueBerryLoggerDeserializer(object):
     '''
     reads a stream of protobuf data with the format 
     <len><protobuf message of size len><len>,...
+
+    yes- should probably be changed to one class for
+    each format that inherit common code. TODO
     '''
     def __init__(self, ofile=stdout, ofmt='txt', raw=False):
         self._pb = bb_log_entry_pb2.bb_log_entry() # protobuf message
@@ -184,10 +188,13 @@ class BlueBerryLoggerDeserializer(object):
         self._msgCount = 0
         
         if ofmt == 'txt':
-            self._outFmt = self._outFmtTxt
+            self._write = self._write_txt
         elif ofmt == 'csv':
             self._csvw = csv.writer(ofile)
-            self._outFmt = self._outFmtCsv
+            self._write = self._write_csv
+        elif ofmt == 'json':
+            self._write = self._write_csv
+            self._csvw = csv.writer(ofile)
         else:
             raise ValueError('Unknown fmt format')
 
@@ -226,7 +233,7 @@ class BlueBerryLoggerDeserializer(object):
                 od[name] = val
         return od
 
-    def _outFmtCsv(self, odmsg):
+    def _write_csv(self, odmsg):
         keys = odmsg.keys()
         keySet = set(keys)
         if self._prevKeySet != keySet:
@@ -247,8 +254,19 @@ class BlueBerryLoggerDeserializer(object):
             vals = [_dfByColName[k].tounit(v) for k, v in odmsg.items()]
         self._csvw.writerow(vals)
 
+    def _write_json(self, odmsg):
+        keys = odmsg.keys()
+        keySet = set(keys)
+        if self._prevKeySet != keySet:
+            self._prevKeySet = keySet
+            json.dump(keys, fp=self._ofile)
+        if self._raw: 
+            vals = odmsg.values()
+        else:
+            vals = [_dfByColName[k].tounit(v) for k, v in odmsg.items()]
+        json.dump(vals, fp=self._ofile)
 
-    def _outFmtTxt(self, odmsg):
+    def _write_txt(self, odmsg):
         '''
         pretty columnized text for terminal output
         '''
@@ -311,7 +329,7 @@ class BlueBerryLoggerDeserializer(object):
             if self._isLastMsg(odmsg):
                 return True
 
-            self._outFmt(odmsg)
+            self._write(odmsg)
             self._bytes = self._bytes[msgSize + 1:] # pop
             self._msgCount += 1
 

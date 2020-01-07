@@ -1,18 +1,5 @@
 
-Python module and command line tool to interact with Loligo BlueBerry Logger
 
-Install
-=======
-
-`python3 -m pip install bleak protobuf`
-
-
-Usage example
-
-```
-python3 ./cliapp.py fetch --rtd -n3 --address=EC:26:CD:58:DC:B0 
-python3 ./cliapp.py config-write --logging=on --address=EC:26:CD:58:DC:B0
-python3 ./cliapp.py config-read ---address=EC:26:CD:58:DC:B0
 
 
 

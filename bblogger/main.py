@@ -1,4 +1,6 @@
-
+#!/usr/bin/env python3
+# command line tool for interacting with Lohmea BlueBerry logger over Bluetooth LE 
+#
 import logging
 import asyncio
 import sys
@@ -393,8 +395,8 @@ def parse_args():
     sp = subparsers.add_parser('set-password', #'config-pw',
             parents = [common],
             aliases=['config-pw'],
-            description='set (new) disable password. \
-            requires device power cycle. empty password to disable')
+            description='Enable password protection on device. \
+            can only be used after device power cycle.')
     sp.set_defaults(_actionfunc=do_set_password)
     sps.append(sp)
 
@@ -409,7 +411,7 @@ def parse_args():
         help='Fetch realtime sensor data instead of logged. Will always show \
             all sensors regardless of config')
 
-    sp.add_argument('--fmt', default='txt', choices=['csv', 'txt'], #'pb', 'json', 
+    sp.add_argument('--fmt', default='txt', choices=['csv', 'json', 'txt'], #'pb'
             help='Data output format')
 
     sp.add_argument('--num', '-n', metavar='N', type=int, 
