@@ -43,6 +43,7 @@ class BlueBerryLogger(BleakClient):
     async def write_u32(self, cuuid, val):
         val = int(val)
         data = val.to_bytes(4, byteorder='little', signed=False)
+        data = bytearray(data) # fixes bug(!?) in txdbus ver 1.1.1 
         await self.write_gatt_char(cuuid, data, response=True)
 
     async def read_u32(self, cuuid):
@@ -117,7 +118,7 @@ async def bbl_connect(loop, args, unlock=False):
     if unlock:
         rc = await bbl.pw_status()
         if rc == PW_STATUS.UNVERIFIED: 
-            if 'password' not in args:
+            if args.password is None:
                 await bbl.disconnect()
                 die('Password needed for this device and operation')
             await bbl.pw_write(args.password)
@@ -227,7 +228,7 @@ async def do_set_password(loop, args):
     bbl = await bbl_connect(loop, args)
     rc = await bbl.pw_status()
     if rc == PW_STATUS.INIT:
-        bbl.pw_write(args.password)
+        await bbl.pw_write(args.password)
         print_dbg('Password protection enabled')
     else:
         await bbl.disconnect()
