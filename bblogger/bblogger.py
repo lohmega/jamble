@@ -1,17 +1,21 @@
 
+import asyncio
 import logging
 from sys import stderr, stdout
 import csv
 import json
 
-# temporary fix as uuid not (yet) suported in bleak MacOS backend, only str works
-#from uuid import UUID
-UUID = lambda x: str(x)
-
-import bb_log_entry_pb2
-
 # not needed in python >= 3.6? as default dict keeps order
 from collections import OrderedDict
+
+from bleak import BleakClient, discover
+from bleak.exc import BleakError
+import bb_log_entry_pb2
+
+# temporary fix as uuid not (yet) suported in bleak MacOS backend, only str works
+# from uuid import UUID
+UUID = lambda x: str(x)
+
 
 try:
     from google.protobuf.json_format import MessageToDict
@@ -24,17 +28,11 @@ except ImportError:
         tmpjs = MessageToJson(pb)
         return json.loads(tmpjs)
 
-_logger = logging.getLogger(__name__)
+logger = logging.getLogger(__name__)
 
-#wrap logger to behave like print. i.e. automatic conversion to string
-def print_wrn(*args):
-    _logger.warning(' '.join(str(a) for a in args))
+# Command line interface stdout 
+CLI_OUTPUT = False
 
-def print_err(*args):
-    _logger.error(' '.join(str(a) for a in args))
-
-def print_dbg(*args):
-    _logger.debug(' '.join(str(a) for a in args))
 
 # Command response codes.
 CMD_RESP_CODES = {
@@ -170,7 +168,7 @@ for df in _dfList:
 
 SENSORS = _sensors
                 
-class BlueBerryLoggerDeserializer(object):
+class BlueBerryDeserializer(object):
     '''
     reads a stream of protobuf data with the format 
     <len><protobuf message of size len><len>,...
@@ -199,7 +197,7 @@ class BlueBerryLoggerDeserializer(object):
             raise ValueError('Unknown fmt format')
 
     @property
-    def msgCount(self):
+    def nentries(self):
         return self._msgCount
 
     def _MessageToOrderedDict(self, pb, columnize=False):
@@ -305,7 +303,7 @@ class BlueBerryLoggerDeserializer(object):
         timestamp field '''
         if len(odm) == 1:
             if 'TS' not in odm: 
-                print_wrn('unexpected last msg keys:', odm.keys())
+                logger.warning('unexpected last msg keys {}'.format(odm.keys()))
             return True
         else:
             return False
@@ -334,4 +332,266 @@ class BlueBerryLoggerDeserializer(object):
             self._msgCount += 1
 
 
+class BlueBerryClient(BleakClient):
+
+    async def write_u32(self, cuuid, val):
+        val = int(val)
+        data = val.to_bytes(4, byteorder='little', signed=False)
+        data = bytearray(data) # fixes bug(!?) in txdbus ver 1.1.1 
+        await self.write_gatt_char(cuuid, data, response=True)
+
+    async def read_u32(self, cuuid):
+        ba = await self.read_gatt_char(cuuid)
+        assert(len(ba) == 4)
+        return int.from_bytes(ba, byteorder='little', signed=False)
+
+    async def cmd(self, txdata, rxsize=None):
+        ''' first byte in txdata is the cmd id '''
+        txuuid = UUIDS.C_CMD_TX
+        rxuuid = UUIDS.C_CMD_RX 
+
+        txdata = bytearray(txdata)
+        rxdata = bytearray()
+        if not rxsize:
+            return await self.write_gatt_char(txuuid, txdata, response=True)
+
+        event = asyncio.Event()
+        def response_handler(sender, data):
+            # sender is str. should be uuid!?
+            if sender !=  str(rxuuid):
+                logger.warning('unexpected notify response \
+                        from {} expected {}'.format(sender, rxuuid))
+                return
+            rxdata.extend(data)
+            logger.debug('cmd RXD:{}'.format(data))
+            event.set()
+
+        await self.start_notify(rxuuid, response_handler)
+        await self.write_gatt_char(txuuid, txdata, response=True)
+        await event.wait()
+        await self.stop_notify(rxuuid)
+        await asyncio.sleep(2) # TODO remove!?
+
+        assert(len(rxdata) == rxsize)
+
+        if rxsize and rxdata[0] != (txdata[0] | 0x80):
+            raise RuntimeError('Unexpected cmd id in respone {}'.format(rxdata))
+
+        return rxdata
+
+    async def pw_write(self, s):
+        ''' if pw_status is "init", set new password, 
+        if pw_status="unverified", unlock device.
+
+        Password must be 8 chars and ascii only
+        '''
+        data = bytearray([0x06]) # 0x06 = command code 
+        assert(len(s) == 8)
+        data.extend(s)
+        await self.cmd(data)
+
+    
+    async def pw_status(self):
+        ''' password status '''
+        rsp = await self.cmd([0x07], 2)
+        return rsp[1]
+
+
+async def _connect(address, **kwargs):
+
+    bbc = BlueBerryClient(address, loop=kwargs.get('loop'))
+
+    try:
+        await bbc.connect()
+        await bbc.is_connected() # needed?
+    except BleakError as e:
+        # provide a better error message then dual thread backtrace...
+        raise RuntimeError('Failed to connect. Device exitst?', e)
+
+    return bbc
+
+async def _connect_unlock(address, password=None, **kwargs):
+    '''
+    connect and unlock device if it requires a password
+    '''
+
+    bbc = await _connect(address, **kwargs)
+
+    rc = await bbc.pw_status()
+    if rc == PW_STATUS.UNVERIFIED: 
+        if password is None:
+            await bbc.disconnect()
+            raise ValueError('Password needed for this device and operation')
+        await bbc.pw_write(password)
+    else:
+        pass # password not needed for this device
+
+    return bbc
+
+async def scan(timeout=None, **kwargs):
+    devices = []
+    candidates = await discover()
+    for d in candidates:
+        match = False
+        if 'uuids' in d.metadata:
+            advertised = d.metadata['uuids']
+            suuid = str(UUIDS.S_LOG)
+            if suuid.lower() in advertised or suuid.upper() in advertised:
+                match = True
+        elif 'BlueBerry' in d.name:
+            logger.warning('no mathcing service uuid but matching name {}'.format(d))
+            match = True
+        else:
+            logger.debug('ignoring device={}'.format(d))
+
+        if match:
+            logger.debug('details={}, metadata={}'.format(d.details, d.metadata))
+            if CLI_OUTPUT:
+                print(d.address, '  ', d.rssi, 'dBm', '  ', d.name)
+            devices.append(d)
+
+    return devices
+
+
+async def blink(**kwargs):
+    n = kwargs.get('num', 0)
+    assert(n > 0)
+    bbc = await _connect(**kwargs)
+    while n:
+        await bbc.cmd([0x01])
+        n = n - 1
+        if n > 0:
+            await asyncio.sleep(1)
+
+    await bbc.disconnect()
+
+async def config_read(address, **kwargs):
+
+    def to_onoff(x):
+        return 'on' if x else 'off'
+
+    conf = OrderedDict()
+    bbc = await _connect(**kwargs)
+
+    val = await bbc.read_u32(UUIDS.C_CFG_LOG_ENABLE)
+    conf['logging'] = to_onoff(val)
+
+    val = await bbc.read_u32(UUIDS.C_CFG_INTERVAL)
+    conf['interval'] = val
+
+    val = await bbc.pw_status()
+    conf['pwstatus'] = '{} ({})'.format(val, pw_status_to_str(val))
+
+    enbits = await bbc.read_u32(UUIDS.C_CFG_SENSOR_ENABLE)
+    await bbc.disconnect()
+
+    for name, s in SENSORS.items():
+        conf[s.apiName] = to_onoff(s.enmask & enbits)
+
+    if CLI_OUTPUT:
+        for k, v in conf.items(): 
+            print('  ', k.ljust(10), ':', v)
+
+    return conf
+
+async def config_write(address, **kwargs):
+    setMask = 0
+    clrMask = 0
+
+    # sanity check all params before write
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+
+        if k in SENSORS:
+            enmask = SENSORS[k].enmask 
+            if v:
+                setMask |= enmask
+            else:
+                clrMask |= enmask
+        else:
+            logger.debug('Ignoring unknown conifg field "{}"'.format(k))
+        
+
+    bbc = await _connect_unlock(address, **kwargs)
+
+    logging = kwargs.get('logging')
+    if logging is not None:
+        await bbc.write_u32(UUIDS.C_CFG_LOG_ENABLE, logging)
+
+    interval = kwargs.get('interval')
+    if interval is not None:
+        await bbc.write_u32(UUIDS.C_CFG_INTERVAL, interval)
+
+    cuuid = UUIDS.C_CFG_SENSOR_ENABLE
+    if setMask or clrMask:
+        enMaskOld = await bbc.read_u32(cuuid)
+        enMaskNew = (enMaskOld & ~clrMask) | setMask
+        await bbc.write_u32(cuuid, enMaskNew)
+
+        logger.debug('enabled sensors \
+                old=0x{:04X}, new=0x{:04X}'.format(enMaskOld, enMaskNew))
+
+    await bbc.disconnect()
+
+
+async def set_password(address, password, **kwargs):
+    if password is None:
+        raise ValueError('No new password provided')
+
+    bbc = await _connect(address, **kwargs)
+
+    rc = await bbc.pw_status()
+    if rc == PW_STATUS.INIT:
+        await bbc.pw_write(password)
+        logger.debug('Password protection enabled')
+    else:
+        await bbc.disconnect()
+        raise RuntimeError('Device not in init mode. Please power cycle device')
+
+    await bbc.disconnect()
+    
+async def fetch(address, ofile=None, rtd=False, fmt='txt', num=None, **kwargs):
+
+    if rtd:
+        uid = UUIDS.C_SENSORS_RTD
+    else:
+        uid = UUIDS.C_SENSORS_LOG
+
+    if ofile is None:
+        ofile = stdout
+    else:
+        ofile = open(ofile, 'w')
+        #TODO open file, check exists etc
+
+    bbd = BlueBerryDeserializer(ofmt=fmt, ofile=ofile)
+    nentries = num
+
+    event = asyncio.Event()
+    def response_handler(sender, data):
+        if str(sender).upper() !=  str(uid).upper():
+            logger.warning('unexpected notify response \
+                    from {} expected {}'.format(sender, uid))
+            return
+
+        done = bbd.putb(data)
+        if not done and nentries is not None:
+            done = bbd.nentries >= nentries
+        if done:
+            logger.debug('End of log. Fetched {} entries'.format(bbd.nentries))
+            event.set()
+
+    bbc = await _connect_unlock(address, **kwargs)
+
+    if rtd:    
+        enabled = await bbc.read_u32(UUIDS.C_CFG_LOG_ENABLE)
+        if not enabled:
+            await bbc.disconnect()
+            raise RuntimeError('logging must be enabled for real-time data (rtd)')
+
+    await bbc.start_notify(uid, response_handler)
+    await event.wait()
+    await bbc.stop_notify(uid)
+
+    await bbc.disconnect()
 
