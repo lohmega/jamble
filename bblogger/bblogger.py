@@ -564,9 +564,10 @@ async def fetch(address, ofile=None, rtd=False, fmt='txt', num=None, **kwargs):
         ofile = open(ofile, 'w')
         #TODO open file, check exists etc
 
+    bbc = await _connect_unlock(address, **kwargs)
+
     bbd = BlueBerryDeserializer(ofmt=fmt, ofile=ofile)
     nentries = num
-
     event = asyncio.Event()
     def response_handler(sender, data):
         if str(sender).upper() !=  str(uid).upper():
@@ -581,7 +582,6 @@ async def fetch(address, ofile=None, rtd=False, fmt='txt', num=None, **kwargs):
             logger.debug('End of log. Fetched {} entries'.format(bbd.nentries))
             event.set()
 
-    bbc = await _connect_unlock(address, **kwargs)
 
     if rtd:    
         enabled = await bbc.read_u32(UUIDS.C_CFG_LOG_ENABLE)

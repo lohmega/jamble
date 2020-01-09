@@ -9,6 +9,7 @@ import argparse
 
 # not needed in python >= 3.6? as default dict keeps order
 import bblogger as bbl
+bbl.CLI_OUTPUT = True
 
 #from bblogger import BlueBerryLoggerDeserializer, \
 #        SENSORS, UUIDS, PW_STATUS, pw_status_to_str
@@ -18,18 +19,7 @@ from bleak import __version__ as bleak_version
 
 # logging.basicConfig(stream=sys.stderr, level=logging.ERROR,
 #        format='%(levelname)s: %(message)s')
-_logger = logging.getLogger(__name__)
-
-
-#wrap logger to behave like print. i.e. automatic conversion to string
-def print_wrn(*args):
-    _logger.warning(' '.join(str(a) for a in args))
-
-def print_err(*args):
-    _logger.error(' '.join(str(a) for a in args))
-
-def print_dbg(*args):
-    _logger.debug(' '.join(str(a) for a in args))
+logger = logging.getLogger(__name__)
 
 
 def parse_args():
@@ -200,7 +190,7 @@ def print_versions():
         print('bluez:', s)
 
 def set_verbose(verbose_level):
-    loggers = [logging.getLogger('bblogger'), _logger]
+    loggers = [logging.getLogger('bblogger'), logger]
 
     if verbose_level <= 0:
         level = logging.WARNING
@@ -211,11 +201,8 @@ def set_verbose(verbose_level):
 
     if verbose_level >= 4:
         bleak_logger = logging.getLogger('bleak')
-        bleak_logger.setLevel(logging.DEBUG)
         loggers.append(bleak_logger)
 
-    # create logger
-    #_logger.setLevel(logging.DEBUG)
 
     handler = logging.StreamHandler(sys.stderr)
     handler.setLevel(level)
@@ -225,8 +212,8 @@ def set_verbose(verbose_level):
     handler.setFormatter(formatter)
 
     for l in loggers:
+        l.setLevel(level) #logging.DEBUG)
         l.addHandler(handler)
-        l.setLevel(logging.DEBUG)
 
     if verbose_level >= 3:
         print_versions()
@@ -235,7 +222,7 @@ def main():
     args = parse_args()
 
     set_verbose(args['verbose'])
-    print_dbg(args)
+    logger.debug('args={}'.format(args))
 
     if args.get('version'): 
         print_versions()
