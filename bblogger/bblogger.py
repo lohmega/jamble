@@ -16,13 +16,11 @@ import bb_log_entry_pb2
 # from uuid import UUID
 UUID = lambda x: str(x)
 
-
 try:
     from google.protobuf.json_format import MessageToDict
 except ImportError:
     # not in debian stretch dpkg/apt version of the pb lib
     from google.protobuf.json_format import MessageToJson
-    import json
     def MessageToDict(pb):
         # super inefficient - yes!
         tmpjs = MessageToJson(pb)
@@ -32,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 # Command line interface stdout 
 CLI_OUTPUT = False
-
 
 # Command response codes.
 CMD_RESP_CODES = {

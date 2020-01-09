@@ -6,19 +6,11 @@ import asyncio
 import sys
 import argparse
 
-
-# not needed in python >= 3.6? as default dict keeps order
 import bblogger as bbl
-bbl.CLI_OUTPUT = True
-
-#from bblogger import BlueBerryLoggerDeserializer, \
-#        SENSORS, UUIDS, PW_STATUS, pw_status_to_str
-
 from bleak import __version__ as bleak_version
 
+bbl.CLI_OUTPUT = True
 
-# logging.basicConfig(stream=sys.stderr, level=logging.ERROR,
-#        format='%(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 
