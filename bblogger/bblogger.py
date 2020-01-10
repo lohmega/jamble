@@ -468,7 +468,7 @@ async def config_read(address, **kwargs):
         return 'on' if x else 'off'
 
     conf = OrderedDict()
-    bbc = await _connect(**kwargs)
+    bbc = await _connect(address, **kwargs)
 
     val = await bbc.read_u32(UUIDS.C_CFG_LOG_ENABLE)
     conf['logging'] = to_onoff(val)
@@ -494,6 +494,8 @@ async def config_read(address, **kwargs):
 async def config_write(address, **kwargs):
     setMask = 0
     clrMask = 0
+    if address is None:
+        raise ValueError('invalid address')
 
     # sanity check all params before write
     for k, v in kwargs.items():
