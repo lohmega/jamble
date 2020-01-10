@@ -1,25 +1,27 @@
 # jamble
 command line tool for interacting with Lohmea BlueBerry logger over Bluetooth LE 
 
+Should work on Linux, MacOS and windows but Windows untested and there is a bug
+in bleak ver <= 0.5.1 for MacOS. Fixes is in the develop branch and hopefull
+included in next release.
+
 install
 -------
-not yet any installer. On Linux and MacOS something like the following should work 
+not yet any installer try the follwing 
 ```
 python3 -m pip install bleak protobuf
-# assuming `~/bin` is on PATH
-cd ~/bin
+# git and clone this repo
 git clone https://github.com/lohmega/jamble.git
-chmod +x jamble/bblogger/main.py
-ln -s bblogger jamble/bblogger/main.py
+cd jamble/bblogger
+python3 main.py scan
 
 ```
-or just run `python3 main.py` to try it out.
 
 
 Usage example
 
 ```
-# scan an list BlueBerry devices
+# scan and list BlueBerry devices
 python3 main.py scan
 
 # enable logging
@@ -28,3 +30,8 @@ python3 main.py config-write --logging=on --address=<address_or_MacOSid>
 # fetch 3 seconds of real time sensor data
 python3 main.py fetch --rtd -n3 --address=<address_or_MacOSid>
 ```
+
+debug
+-----
+
+Try pass the verbose level 4 argument `-vvvv` to enable lots of debug info
