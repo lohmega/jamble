@@ -28,8 +28,22 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-# Command line interface stdout 
-CLI_OUTPUT = False
+class ATimeoutEvent(asyncio.Event):
+    ''' same as asyncio.Event but wait has a timeout option like threading.Event 
+    '''
+
+    async def wait(self, timeout=None):
+        ''' return True on success, False on timeout '''
+        if timeout is None:
+            await super().wait()
+            return True
+
+        try:
+            await asyncio.wait_for(super().wait(), timeout)
+        except asyncio.TimeoutError:
+            return False
+
+        return True
 
 # Command response codes.
 CMD_RESP_CODES = {
@@ -164,7 +178,8 @@ for df in _dfList:
         _dfByColName[colName] = df
 
 SENSORS = _sensors
-                
+
+
 class BlueBerryDeserializer(object):
     '''
     reads a stream of protobuf data with the format 
@@ -181,15 +196,19 @@ class BlueBerryDeserializer(object):
         self._raw = raw
         self._prevKeySet = None
         self._msgCount = 0
-        
+        self._data = []
+
+        self._fmt = ofmt
+
+        if ofmt is None:
+            self._append_fmt = None
         if ofmt == 'txt':
-            self._write = self._write_txt
+            self._append_fmt = self._append_txt
         elif ofmt == 'csv':
             self._csvw = csv.writer(ofile)
-            self._write = self._write_csv
+            self._append_fmt = self._append_csv
         elif ofmt == 'json':
-            self._write = self._write_csv
-            self._csvw = csv.writer(ofile)
+            self._append_fmt = self._append_json
         else:
             raise ValueError('Unknown fmt format')
 
@@ -199,7 +218,7 @@ class BlueBerryDeserializer(object):
 
     def _MessageToOrderedDict(self, pb, columnize=False):
         ''' 
-        mimic name from prtobuf lib.
+        mimic name from protobuf lib.
         assumption: all values can be converted to float or list of floats.
         if the protobuf format change, the built in MessageToDict() function
         can be used. requres python > 3.6 (?) where the default dict heaviour 
@@ -228,74 +247,74 @@ class BlueBerryDeserializer(object):
                 od[name] = val
         return od
 
-    def _write_csv(self, odmsg):
-        keys = odmsg.keys()
-        keySet = set(keys)
-        if self._prevKeySet != keySet:
-            self._prevKeySet = keySet
-            # units = []
-            # names = []
-            # for colname in keys:
-                # name = colname.ljust(TXT_COL_WIDTH)
-                # names.append(name)
 
-                # df = _dfByColName[colname]
-                # unit = '({})'.format(df.unit).ljust(TXT_COL_WIDTH)
-                # units.append(unit)
-            self._csvw.writerow(keys)
-        if self._raw: 
-            vals = odmsg.values()
-        else:
-            vals = [_dfByColName[k].tounit(v) for k, v in odmsg.items()]
-        self._csvw.writerow(vals)
-
-    def _write_json(self, odmsg):
-        keys = odmsg.keys()
-        keySet = set(keys)
-        if self._prevKeySet != keySet:
-            self._prevKeySet = keySet
-            json.dump(keys, fp=self._ofile)
-        if self._raw: 
-            vals = odmsg.values()
-        else:
-            vals = [_dfByColName[k].tounit(v) for k, v in odmsg.items()]
-        json.dump(vals, fp=self._ofile)
-
-    def _write_txt(self, odmsg):
+    def _append_txt(self, keys, vals, add_header):
         '''
-        pretty columnized text for terminal output
+        pretty columnized text for terminal output.
+        will not look pretty if raw values are used
         '''
-
-        keys = odmsg.keys()
-        keySet = set(keys)
-        if self._prevKeySet != keySet:
-            if self._prevKeySet is not None:
+        if add_header:
+            if add_header > 1:
                 print('', file=self._ofile) # extra delimiter
-            self._prevKeySet = keySet
 
             units = []
             names = []
-            for colname in keys:
-                name = colname.ljust(TXT_COL_WIDTH)
+            for k in keys:
+                name = k.ljust(TXT_COL_WIDTH)
                 names.append(name)
 
-                df = _dfByColName[colname]
+                df = _dfByColName[k]
                 unit = '({})'.format(df.unit).ljust(TXT_COL_WIDTH)
                 units.append(unit)
 
             print(*names, sep='', file=self._ofile)
             print(*units, sep='', file=self._ofile)
 
-        vals = []
-        for colname, value in odmsg.items():
-            df = _dfByColName[colname]
-            v = value if self._raw else df.tounit(value)
-            s = df.txtfmt.format(v)
-            vals.append(s.ljust(TXT_COL_WIDTH))
+        svals = [None] * len(keys)
+        for i, k in enumerate(keys):
+            df = _dfByColName[k]
+            s = df.txtfmt.format(vals[i])
+            svals[i] = s.ljust(TXT_COL_WIDTH)
 
-        print(*vals, sep='', file=self._ofile)
+        print(*svals, sep='', file=self._ofile)
 
-    def _isLastMsg(self, odm):
+    def _append_csv(self, keys, vals, add_header):
+        if add_header:
+            self._csvw.writerow(keys)
+        self._csvw.writerow(vals)
+
+    def _append_json(self, keys, vals, add_header):
+        # TODO json start and end "{}" is missing 
+        if add_header:
+            json.dump(keys, fp=self._ofile)
+        json.dump(vals, fp=self._ofile)
+
+    def _append(self, odmsg):
+        keys = odmsg.keys()
+
+        keySet = set(keys)
+        if self._prevKeySet != keySet:
+            if self._prevKeySet is not None:
+                add_header = 1
+            else:
+                add_header = 2
+            self._prevKeySet = keySet
+        else:
+            add_header = 0
+
+        if self._raw: 
+            vals = odmsg.values()
+        else:
+            vals = [_dfByColName[k].tounit(v) for k, v in odmsg.items()]
+
+        assert(len(keys) == len(vals))
+
+        self._data.append(vals)
+
+        if self._append_fmt:
+            self._append_fmt(keys, vals, add_header)
+
+    def _is_last_msg(self, odm):
         ''' end of log "EOF" is a empty messagge with only the required
         timestamp field '''
         if len(odm) == 1:
@@ -321,28 +340,90 @@ class BlueBerryDeserializer(object):
             self._pb.Clear() 
             msg = self._pb.FromString(self._bytes[1:msgSize + 1])
             odmsg = self._MessageToOrderedDict(msg, columnize=True)
-            if self._isLastMsg(odmsg):
+            if self._is_last_msg(odmsg):
                 return True
 
-            self._write(odmsg)
+            self._append(odmsg) 
+
             self._bytes = self._bytes[msgSize + 1:] # pop
             self._msgCount += 1
 
 
 class BlueBerryClient(BleakClient):
+    '''
+    '''
 
-    async def write_u32(self, cuuid, val):
+    def __init__(self, *args, **kwargs):
+        address = kwargs.get('address')
+        if address is None:
+            raise ValueError('invalid address')
+        self._password = kwargs.get('password')
+
+        timeout = kwargs.get("timeout", 5.0)
+        self._bc = BleakClient(address, timeout=timeout)
+        self._bc = BleakClient(address)
+        self._evt_cmd = ATimeoutEvent()
+        self._evt_fetch = ATimeoutEvent()
+
+        # not in all backend (yet). will work without it but might hang forver
+        try:
+            self._bc.set_disconnected_callback(self._on_disconnect)
+        except NotImplementedError:
+            logger.warning('set_disconnected_callback not supported')
+
+    async def __aenter__(self):
+        await self._bc.connect()
+        return self
+
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self._bc.disconnect()
+
+    def _on_disconnect(self, client):
+        logger.warning('Device {} unexpected disconnect'.format(self._bc.address))
+        if not client is self._bc:
+            logger.warning('Unexpected disconnect callback from {} (self:{})'.format(client.address, self._bc.address))
+            return
+        # abort if someone is waiting on notifications and device disconnect
+        if not self._evt_cmd.is_set():
+            self._evt_cmd.set()
+
+        if not self._evt_fetch.is_set():
+            self._evt_fetch.set()
+
+    async def connect(self, address, **kwargs):
+        # called on enter
+        await self._bc.connect(**kwargs)
+        # TODO unlock only needed for same operations do it when needed
+        await self._unlock(self._password)
+        return True
+
+    async def _unlock(self, password):
+        '''
+        unlock device if it requires a password
+        '''
+        rc = await self._pw_status()
+        if rc == PW_STATUS.UNVERIFIED: 
+            if password is None:
+                await self._bc.disconnect()
+                raise ValueError('Password needed for this device')
+            await self._pw_write(password)
+        else:
+            pass # password not needed for this device
+        return rc
+
+
+    async def _write_u32(self, cuuid, val):
         val = int(val)
         data = val.to_bytes(4, byteorder='little', signed=False)
         data = bytearray(data) # fixes bug(!?) in txdbus ver 1.1.1 
-        await self.write_gatt_char(cuuid, data, response=True)
+        await self._bc.write_gatt_char(cuuid, data, response=True)
 
-    async def read_u32(self, cuuid):
-        ba = await self.read_gatt_char(cuuid)
+    async def _read_u32(self, cuuid):
+        ba = await self._bc.read_gatt_char(cuuid)
         assert(len(ba) == 4)
         return int.from_bytes(ba, byteorder='little', signed=False)
 
-    async def cmd(self, txdata, rxsize=None):
+    async def _cmd(self, txdata, rxsize=None):
         ''' first byte in txdata is the cmd id '''
         txuuid = UUIDS.C_CMD_TX
         rxuuid = UUIDS.C_CMD_RX 
@@ -350,23 +431,30 @@ class BlueBerryClient(BleakClient):
         txdata = bytearray(txdata)
         rxdata = bytearray()
         if not rxsize:
-            return await self.write_gatt_char(txuuid, txdata, response=True)
+            return await self._bc.write_gatt_char(txuuid, txdata, response=True)
 
-        event = asyncio.Event()
+        self._evt_cmd.clear()
+
         def response_handler(sender, data):
             # sender is str. should be uuid!?
-            if sender !=  str(rxuuid):
+            if str(sender).lower() !=  str(rxuuid).lower():
                 logger.warning('unexpected notify response \
                         from {} expected {}'.format(sender, rxuuid))
                 return
             rxdata.extend(data)
             logger.debug('cmd RXD:{}'.format(data))
-            event.set()
+            self._evt_cmd.set()
 
-        await self.start_notify(rxuuid, response_handler)
-        await self.write_gatt_char(txuuid, txdata, response=True)
-        await event.wait()
-        await self.stop_notify(rxuuid)
+        await self._bc.start_notify(rxuuid, response_handler)
+        await self._bc.write_gatt_char(txuuid, txdata, response=True)
+        
+        if not await self._evt_cmd.wait(6): 
+            logger.error('notification timeout')
+
+        # hide missleading error on unexpected disconnect
+        if await self._bc.is_connected(): 
+            await self._bc.stop_notify(rxuuid)
+
         await asyncio.sleep(2) # TODO remove!?
 
         assert(len(rxdata) == rxsize)
@@ -376,8 +464,9 @@ class BlueBerryClient(BleakClient):
 
         return rxdata
 
-    async def pw_write(self, s):
-        ''' if pw_status is "init", set new password, 
+    async def _pw_write(self, s):
+        ''' password write.
+        if pw_status is "init", set new password, 
         if pw_status="unverified", unlock device.
 
         Password must be 8 chars and ascii only
@@ -385,49 +474,138 @@ class BlueBerryClient(BleakClient):
         data = bytearray([0x06]) # 0x06 = command code 
         assert(len(s) == 8)
         data.extend(s)
-        await self.cmd(data)
+        await self._cmd(data)
 
     
-    async def pw_status(self):
-        ''' password status '''
-        rsp = await self.cmd([0x07], 2)
+    async def _pw_status(self):
+        ''' get password status '''
+        rsp = await self._cmd([0x07], 2)
         return rsp[1]
 
-
-async def _connect(address, **kwargs):
-
-    bbc = BlueBerryClient(address, loop=kwargs.get('loop'))
-
-    try:
-        await bbc.connect()
-        await bbc.is_connected() # needed?
-    except BleakError as e:
-        # provide a better error message then dual thread backtrace...
-        raise RuntimeError('Failed to connect. Device exitst?', e)
-
-    return bbc
-
-async def _connect_unlock(address, password=None, **kwargs):
-    '''
-    connect and unlock device if it requires a password
-    '''
-
-    bbc = await _connect(address, **kwargs)
-
-    rc = await bbc.pw_status()
-    if rc == PW_STATUS.UNVERIFIED: 
+    async def set_password(self, password):
         if password is None:
-            await bbc.disconnect()
-            raise ValueError('Password needed for this device and operation')
-        await bbc.pw_write(password)
-    else:
-        pass # password not needed for this device
+            raise ValueError('No new password provided')
 
-    return bbc
+        rc = await self._pw_status()
+        if rc == PW_STATUS.INIT:
+            await self._pw_write(password)
+            logger.debug('Password protection enabled')
+        else:
+            raise RuntimeError('Device not in init mode. Please power cycle device')
+        # TODO verify success 
 
-async def scan(timeout=None, **kwargs):
+
+    async def blink(self, n=1):
+        ''' blink LED on device '''
+        assert(n > 0)
+        while n:
+            await self._cmd([0x01])
+            n = n - 1
+            if n > 0:
+                await asyncio.sleep(1)
+
+    async def config_read(self):
+
+        conf = OrderedDict()
+
+        val = await self._read_u32(UUIDS.C_CFG_LOG_ENABLE)
+        conf['logging'] = bool(val)
+
+        val = await self._read_u32(UUIDS.C_CFG_INTERVAL)
+        conf['interval'] = val
+
+        val = await self._pw_status()
+        conf['pwstatus'] = val #'{} ({})'.format(val, pw_status_to_str(val))
+
+        enbits = await self._read_u32(UUIDS.C_CFG_SENSOR_ENABLE)
+
+        for name, s in SENSORS.items():
+            conf[s.apiName] = bool(s.enmask & enbits)
+
+        return conf
+
+    async def config_write(self, **kwargs):
+        setMask = 0
+        clrMask = 0
+
+        # sanity check all params before write
+        for k, v in kwargs.items():
+            if v is None:
+                continue
+
+            if k in SENSORS:
+                enmask = SENSORS[k].enmask 
+                if v:
+                    setMask |= enmask
+                else:
+                    clrMask |= enmask
+            else:
+                logger.debug('Ignoring unknown conifg field "{}"'.format(k))
+
+        logging = kwargs.get('logging')
+        if logging is not None:
+            await self._write_u32(UUIDS.C_CFG_LOG_ENABLE, logging)
+
+        interval = kwargs.get('interval')
+        if interval is not None:
+            await self._write_u32(UUIDS.C_CFG_INTERVAL, interval)
+
+        cuuid = UUIDS.C_CFG_SENSOR_ENABLE
+        if setMask or clrMask:
+            enMaskOld = await self._read_u32(cuuid)
+            enMaskNew = (enMaskOld & ~clrMask) | setMask
+            await self._write_u32(cuuid, enMaskNew)
+
+            logger.debug('enabled sensors \
+                    old=0x{:04X}, new=0x{:04X}'.format(enMaskOld, enMaskNew))
+
+
+
+    async def fetch(self, ofile=None, rtd=False, fmt='txt', num=None, **kwargs):
+
+        if rtd:
+            uuid_ = UUIDS.C_SENSORS_RTD
+        else:
+            uuid_ = UUIDS.C_SENSORS_LOG
+
+        bbd = BlueBerryDeserializer(ofmt=fmt, ofile=ofile)
+        nentries = num
+
+        self._evt_fetch.clear()
+        def response_handler(sender, data):
+            if str(sender).lower() !=  str(uuid_).lower():
+                logger.warning('unexpected notify response \
+                        from {} expected {}'.format(sender, uuid_))
+                return
+
+            done = bbd.putb(data)
+            if not done and nentries is not None:
+                done = bbd.nentries >= nentries
+            if done:
+                logger.debug('End of log. Fetched {} entries'.format(bbd.nentries))
+                self._evt_fetch.set()
+
+
+        if rtd:    
+            enabled = await self._read_u32(UUIDS.C_CFG_LOG_ENABLE)
+            if not enabled:
+                raise RuntimeError('logging must be enabled for real-time data (rtd)')
+
+        await self._bc.start_notify(uuid_, response_handler)
+        if not await self._evt_fetch.wait(6): 
+            logger.error('notification timeout')
+
+        # hide missleading error on unexpected disconnect
+        if await self._bc.is_connected(): 
+            await self._bc.stop_notify(uuid_)
+
+        logger.debug('Fetched %d entries' % bbd.nentries)
+        return bbd._data
+
+
+async def scan(timeout=None, outfile=None, **kwargs):
     devices = []
-    candidates = await discover()
+    candidates = await discover(timeout=timeout)
     for d in candidates:
         match = False
         if 'uuids' in d.metadata:
@@ -436,6 +614,7 @@ async def scan(timeout=None, **kwargs):
             if suuid.lower() in advertised or suuid.upper() in advertised:
                 match = True
         elif 'BlueBerry' in d.name:
+            # Advertised UUIDs sometimes slow to retrive 
             logger.warning('no mathcing service uuid but matching name {}'.format(d))
             match = True
         else:
@@ -443,154 +622,9 @@ async def scan(timeout=None, **kwargs):
 
         if match:
             logger.debug('details={}, metadata={}'.format(d.details, d.metadata))
-            if CLI_OUTPUT:
-                print(d.address, '  ', d.rssi, 'dBm', '  ', d.name)
+            if outfile:
+                print(d.address, '  ', d.rssi, 'dBm', '  ', d.name, file=outfile)
             devices.append(d)
 
     return devices
-
-
-async def blink(**kwargs):
-    n = kwargs.get('num', 0)
-    assert(n > 0)
-    bbc = await _connect(**kwargs)
-    while n:
-        await bbc.cmd([0x01])
-        n = n - 1
-        if n > 0:
-            await asyncio.sleep(1)
-
-    await bbc.disconnect()
-
-async def config_read(address, **kwargs):
-
-    def to_onoff(x):
-        return 'on' if x else 'off'
-
-    conf = OrderedDict()
-    bbc = await _connect(address, **kwargs)
-
-    val = await bbc.read_u32(UUIDS.C_CFG_LOG_ENABLE)
-    conf['logging'] = to_onoff(val)
-
-    val = await bbc.read_u32(UUIDS.C_CFG_INTERVAL)
-    conf['interval'] = val
-
-    val = await bbc.pw_status()
-    conf['pwstatus'] = '{} ({})'.format(val, pw_status_to_str(val))
-
-    enbits = await bbc.read_u32(UUIDS.C_CFG_SENSOR_ENABLE)
-    await bbc.disconnect()
-
-    for name, s in SENSORS.items():
-        conf[s.apiName] = to_onoff(s.enmask & enbits)
-
-    if CLI_OUTPUT:
-        for k, v in conf.items(): 
-            print('  ', k.ljust(10), ':', v)
-
-    return conf
-
-async def config_write(address, **kwargs):
-    setMask = 0
-    clrMask = 0
-    if address is None:
-        raise ValueError('invalid address')
-
-    # sanity check all params before write
-    for k, v in kwargs.items():
-        if v is None:
-            continue
-
-        if k in SENSORS:
-            enmask = SENSORS[k].enmask 
-            if v:
-                setMask |= enmask
-            else:
-                clrMask |= enmask
-        else:
-            logger.debug('Ignoring unknown conifg field "{}"'.format(k))
-        
-
-    bbc = await _connect_unlock(address, **kwargs)
-
-    logging = kwargs.get('logging')
-    if logging is not None:
-        await bbc.write_u32(UUIDS.C_CFG_LOG_ENABLE, logging)
-
-    interval = kwargs.get('interval')
-    if interval is not None:
-        await bbc.write_u32(UUIDS.C_CFG_INTERVAL, interval)
-
-    cuuid = UUIDS.C_CFG_SENSOR_ENABLE
-    if setMask or clrMask:
-        enMaskOld = await bbc.read_u32(cuuid)
-        enMaskNew = (enMaskOld & ~clrMask) | setMask
-        await bbc.write_u32(cuuid, enMaskNew)
-
-        logger.debug('enabled sensors \
-                old=0x{:04X}, new=0x{:04X}'.format(enMaskOld, enMaskNew))
-
-    await bbc.disconnect()
-
-
-async def set_password(address, password, **kwargs):
-    if password is None:
-        raise ValueError('No new password provided')
-
-    bbc = await _connect(address, **kwargs)
-
-    rc = await bbc.pw_status()
-    if rc == PW_STATUS.INIT:
-        await bbc.pw_write(password)
-        logger.debug('Password protection enabled')
-    else:
-        await bbc.disconnect()
-        raise RuntimeError('Device not in init mode. Please power cycle device')
-
-    await bbc.disconnect()
-    
-async def fetch(address, ofile=None, rtd=False, fmt='txt', num=None, **kwargs):
-
-    if rtd:
-        uid = UUIDS.C_SENSORS_RTD
-    else:
-        uid = UUIDS.C_SENSORS_LOG
-
-    if ofile is None:
-        ofile = stdout
-    else:
-        ofile = open(ofile, 'w')
-        #TODO open file, check exists etc
-
-    bbc = await _connect_unlock(address, **kwargs)
-
-    bbd = BlueBerryDeserializer(ofmt=fmt, ofile=ofile)
-    nentries = num
-    event = asyncio.Event()
-    def response_handler(sender, data):
-        if str(sender).upper() !=  str(uid).upper():
-            logger.warning('unexpected notify response \
-                    from {} expected {}'.format(sender, uid))
-            return
-
-        done = bbd.putb(data)
-        if not done and nentries is not None:
-            done = bbd.nentries >= nentries
-        if done:
-            logger.debug('End of log. Fetched {} entries'.format(bbd.nentries))
-            event.set()
-
-
-    if rtd:    
-        enabled = await bbc.read_u32(UUIDS.C_CFG_LOG_ENABLE)
-        if not enabled:
-            await bbc.disconnect()
-            raise RuntimeError('logging must be enabled for real-time data (rtd)')
-
-    await bbc.start_notify(uid, response_handler)
-    await event.wait()
-    await bbc.stop_notify(uid)
-
-    await bbc.disconnect()
 
