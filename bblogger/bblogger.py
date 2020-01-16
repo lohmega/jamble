@@ -349,7 +349,7 @@ class BlueBerryDeserializer(object):
             self._msgCount += 1
 
 
-class BlueBerryClient(BleakClient):
+class BlueBerryClient():
     '''
     '''
 
@@ -361,7 +361,6 @@ class BlueBerryClient(BleakClient):
 
         timeout = kwargs.get("timeout", 5.0)
         self._bc = BleakClient(address, timeout=timeout)
-        self._bc = BleakClient(address)
         self._evt_cmd = ATimeoutEvent()
         self._evt_fetch = ATimeoutEvent()
 
@@ -592,8 +591,10 @@ class BlueBerryClient(BleakClient):
                 raise RuntimeError('logging must be enabled for real-time data (rtd)')
 
         await self._bc.start_notify(uuid_, response_handler)
-        if not await self._evt_fetch.wait(6): 
-            logger.error('notification timeout')
+
+        timeout = None #kwargs.get('timeout', 100)
+        if not await self._evt_fetch.wait(timeout): 
+            logger.error('Notification timeout after %d sec' % timeout)
 
         # hide missleading error on unexpected disconnect
         if await self._bc.is_connected(): 
