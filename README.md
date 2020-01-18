@@ -35,3 +35,27 @@ debug
 -----
 
 Try pass the verbose level 4 argument `-vvvv` to enable lots of debug info
+
+### GNU/Linux:
+
+
+btmon - bluetooth monitor (replaces hcidump that is no longer maintained)
+will show more details on error than Bluez DBUS API.
+
+`journalctl | grep bluetooth`
+
+Experimental settings in
+`/sys/kernel/debug/bluetooth/hci*/`
+
+`hciconfig -a` - show configurations and interface info
+
+### MacOS
+
+Bluetooth monitor on MacOS "PacketLogger.app":
+- Create Apple developer account.
+- Download xcode (mabye not required)
+- Download "Additional Tools" (contains PacketLogger) from
+ https://developer.apple.com/download/more/?=for%20Xcode
+
+Also see:
+https://stackoverflow.com/questions/5863088/bluetooth-sniffer-preferably-mac-osx
