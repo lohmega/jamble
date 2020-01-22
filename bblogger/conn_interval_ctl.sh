@@ -46,17 +46,20 @@ echoerr()
 CONN_MIN_INTERVAL="/sys/kernel/debug/bluetooth/hci0/conn_min_interval"
 CONN_MAX_INTERVAL="/sys/kernel/debug/bluetooth/hci0/conn_max_interval"
 
-
 configure_service()
 {
-    echo "Setting default conn_max_interval to 160 (200 ms)"
+    local VMAX=160
+    # multipy with 1.25 but integer math
+    local VMAX_MS=$((($VMAX * 5)/4)) 
+
+    echo "Setting default conn_max_interval to $VMAX ($VMAX_MS ms)"
     # service content
     local S=""
-    S="${S}# Setting default conn_max_interval to 160 (200 ms) to avoid \n"
-    S="${S}# disconnect of some BLE devices that require it\n"
+    S="${S}# Setting default conn_max_interval to $VMAX ($VMAX_MS ms) \n"
+    S="${S}# to avoid disconnect of some BLE devices that require it\n"
     S="${S}[Service]\n"
     S="${S}ExecStartPre=/bin/bash -c " # no newline here
-    S="${S}'echo 160 > /sys/kernel/debug/bluetooth/hci0/conn_max_interval'\n"
+    S="${S}'echo $VMAX > $CONN_MAX_INTERVAL'\n"
 
     local BT_SERVICE_D="/etc/systemd/system/bluetooth.service.d" 
     mkdir -p $BT_SERVICE_D
@@ -82,23 +85,48 @@ assert_root()
     fi
 }
 
-assert_root
 
-case "$1" in
-  "configure")
-    configure_service
-    ;;
-  "get-min")
-    cat $CONN_MIN_INTERVAL
-    ;;
-  "get-max")
-    cat $CONN_MAX_INTERVAL
-    ;;
-  "set-max")
-    echo 160 > $CONN_MAX_INTERVAL
-    ;;
-  *)
-    echoerr "unknown arg"
-    exit 1
-    ;;
-esac
+assert_positive_decimal_integer()
+{
+    local VAL="$1"
+    
+    if ! [ "$VAL" -eq "$VAL" ] 2> /dev/null
+    then
+        echoerr "'$VAL' is not a decimal integer"
+        exit 1
+    fi
+
+    if [ "$VAL" -lt "0" ]; then
+        echoerr "'$VAL' is not a positive decimal integer"
+        exit 1
+    fi
+}
+
+main()
+{
+    local VAL
+    assert_root
+
+    case "$1" in
+      "configure")
+        configure_service
+        ;;
+      "get-min")
+        cat $CONN_MIN_INTERVAL
+        ;;
+      "get-max")
+        cat $CONN_MAX_INTERVAL
+        ;;
+      "set-max")
+        $VAL="$2"
+        assert_positive_decimal_integer "$VAL"
+        echo "$VAL" > $CONN_MAX_INTERVAL
+        ;;
+      *)
+        echoerr "unknown arg"
+        exit 1
+        ;;
+    esac
+}
+
+main "$@"

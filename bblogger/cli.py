@@ -8,8 +8,8 @@ import argparse
 import traceback
 
 import bblogger as bbl
-from bleak import __version__ as bleak_version
 
+from bleak import __version__ as bleak_version
 
 
 logger = logging.getLogger(__name__)
