@@ -7,28 +7,33 @@ included in next release.
 
 install
 -------
-not yet any installer try the follwing 
 ```
-python3 -m pip install bleak protobuf
-# git and clone this repo
+python3 -m pip install git+ssh://git@github.com/lohmega/jamble.git
+```
+or 
+```
+# clone this repo
 git clone https://github.com/lohmega/jamble.git
-cd jamble/bblogger
-python3 main.py scan
-
+cd jamble
+make install
 ```
 
+Note on Linux:
 
-Usage example
+
+
+CLI tool Usage example
+----------------------
 
 ```
 # scan and list BlueBerry devices
-python3 main.py scan
+bblog scan
 
 # enable logging
-python3 main.py config-write --logging=on --address=<address_or_MacOSid>
+bblog config-write --logging=on --address=<address_or_MacOSid>
 
 # fetch 3 seconds of real time sensor data
-python3 main.py fetch --rtd -n3 --address=<address_or_MacOSid>
+bblog fetch --rtd -n3 --address=<address_or_MacOSid>
 ```
 
 debug
