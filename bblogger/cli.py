@@ -104,7 +104,6 @@ async def do_test(**kwargs):
     await do_fetch(**kwargs)
 
 
-
 def parse_args():
 
     def type_password(s):

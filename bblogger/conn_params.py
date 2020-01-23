@@ -51,7 +51,14 @@ def _raw2ms(x):
     ''' convert raw values of min/max conn interval to milliseconds '''
     return x * 1.25
 
-def __bt_debugfs_path(hci, prop):
+def _debugfs_path(hci, prop):
+
+    if system() != 'Linux':
+        raise RuntimeError('Linux only')
+
+    if geteuid() != 0:
+        raise RuntimeError('Need root for this. try sudo')
+
     btd = '/sys/kernel/debug/bluetooth/'
     path_ = path.join(btd, hci, prop)
     # check exists always in case of write
@@ -59,13 +66,13 @@ def __bt_debugfs_path(hci, prop):
         raise RuntimeError('No such path %s' % path_)
     return path_
 
-def __bt_debugfs_set(hci, prop, val):
-    path_ = __bt_debugfs_path(hci, prop)
+def _debugfs_set(hci, prop, val):
+    path_ = _debugfs_path(hci, prop)
     with open(path_, 'w') as f:
         f.write(str(int(val)))
 
-def __bt_debugfs_get(hci, prop):
-    path_ = __bt_debugfs_path(hci, prop)
+def _debugfs_get(hci, prop):
+    path_ = _debugfs_path(hci, prop)
     with open(path_) as f:
         val = f.readline()
     return int(val.strip())
@@ -79,11 +86,11 @@ def verify_configured():
         return
 
     logger.warning(('System not configured! '
-        '(Bluetooth conn_max_interval to low) '
-        'Please run the follwing command as root to remove this warning: '
-        '\'python3 {} --create-service'.format(path.realpath(__file__))))
+        'Please run the following command as root to remove this warning: '
+        '\'python3 {} --create-service\''.format(path.realpath(__file__))
+        ))
 
-def _create_service(hci='hci0', vmax=160):
+def _create_service(hci='hci0', vmax=160, daemon_reload=False):
 
     assert (geteuid() == 0)
     assert path.exists('/etc/systemd/system')
@@ -111,65 +118,62 @@ def _create_service(hci='hci0', vmax=160):
     with open(_BT_SERVICE_FILE, 'w') as f:
         f.write('\n'.join(lines))
    
-    if 1:
-        # update it now and let the service to it next time after reboot/reload
-        with open(vmaxpath, 'w') as f:
-            f.write(str(int(vmax)))
-    else:
-        # alternative reload dameons to run the newly created startup service
+    if daemon_reload:
+        # reload dameons to run the newly created startup service
         import subprocess
         logger.info('Reloading bluetooth daemon')
         p = subprocess.Popen(['systemctl', 'daemon-reload'], stdout=subprocess.PIPE)
         out, err = p.communicate()
         if p.returncode:
             raise RuntimeError('systemctl error %s' % err)
+    else:
+        # update it now and let the service do it next time after reboot/reload
+        with open(vmaxpath, 'w') as f:
+            f.write(str(int(vmax)))
 
 
-def __main():
-
-    if system() != 'Linux':
-        raise RuntimeError('Linux only')
-
-    if geteuid() != 0:
-        raise RuntimeError('Need root for this. try sudo')
-
+def main():
     import argparse
-    parser = argparse.ArgumentParser()
-
-    parser.add_argument('--max', type=int,
-            default=None, 
-            help='')
-    
-    parser.add_argument('--min', type=int,
-            default=None, 
-            help='')
-
-    parser.add_argument('--status', 
-            default=False, 
-            action='store_true',
-            help='')
-
-    parser.add_argument('--create-service', 
-            default=False, 
-            action='store_true',
-            help='Creates a systemd service that set conn_max_interval')
-
-    parser.add_argument('-v', '--verb', 
-            default=False, 
-            action='store_true',
-            help='')
+    parser = argparse.ArgumentParser(description=('Linux only. '
+               'Configure BLE interface connection parameters. '
+               'Requires root'))
 
     parser.add_argument('--hci', 
             type=str,
             default='hci0',
+            help='BT interface')
+
+    parser.add_argument('--show', 
+            default=False, 
+            action='store_true',
             help='')
 
+    parser.add_argument('--interval_max', type=int,
+            default=None, 
+            help='Set non-persistent conn_max_interval')
+    
+    parser.add_argument('--interval_min', type=int,
+            default=None, 
+            help='Set non-persistent conn_min_interval')
+
+    parser.add_argument('--create-service', 
+            default=False, 
+            action='store_true',
+            help=('Creates a systemd upstart service for persistent configuration. '
+                'Will use default values not those supplied by other args'))
+
+    parser.add_argument('-v', '--verbose',
+           default=False,
+           action='store_true',
+           help='Verbose output')
+
+
     args = parser.parse_args()
-    if args.verb:
+    if args.verbose:
         level = logging.DEBUG
     else:
         level = logging.INFO
-
+ 
     handler = logging.StreamHandler()
     handler.setLevel(level)
     logger.setLevel(level)
@@ -177,25 +181,23 @@ def __main():
     handler.setFormatter(formatter)
     logger.addHandler(handler)
 
-    if args.status:
-        v = __bt_debugfs_get(args.hci, 'conn_min_interval')
-        print('conn_min_interval: %d (%.2f ms)' % (v, _raw2ms(v)))
 
-        v = __bt_debugfs_get(args.hci, 'conn_max_interval')
+    if args.show:
+        v = _debugfs_get(args.hci, 'conn_min_interval')
+        print('conn_min_interval: %d (%.2f ms)' % (v, _raw2ms(v)))
+ 
+        v = _debugfs_get(args.hci, 'conn_max_interval')
         print('conn_max_interval: %d (%.2f ms)' % (v, _raw2ms(v)))
 
-        print('configured: %s' %  str(is_configured()))
-        exit(0)
+    if not args.interval_min is None:
+        _debugfs_set(args.hci, 'conn_min_interval', args.interval_min)
+
+    if not args.interval_max is None:
+        _debugfs_set(args.hci, 'conn_max_interval', args.interval_max)
 
     if args.create_service:
         _create_service(hci=args.hci)
-        exit(0)
-
-    if not args.min is None:
-       __bt_debugfs_set(args.hci, 'conn_min_interval', args.min)
-
-    if not args.max is None:
-       __bt_debugfs_set(args.hci, 'conn_max_interval', args.max)
+    
 
 if __name__ == '__main__':
-    __main()
+    main()

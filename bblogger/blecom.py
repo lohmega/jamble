@@ -7,7 +7,7 @@ from bleak import BleakClient, discover
 from bleak.exc import BleakError
 
 if system() == 'Linux':
-    from bblogger.conn_interval_ctl import verify_configured
+    from bblogger.conn_params import verify_configured
     verify_configured()
 
 from bblogger.deserialize import BlueBerryDeserializer, SENSORS

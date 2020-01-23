@@ -15,11 +15,9 @@ clean:
     find . -name '*~' -exec rm -f {} +
     find . -name '__pycache__' -exec rm -fr {} +
 
-# hack - Using pip ot install is morepermisive then 
-# 	python setup.py install
-install: clean ## install the 
+# hack - Using pip to install is more permisive then 
+# 	python setup.py install. i.e. works without sudo
+install: clean 
     python3 setup.py sdist bdist_wheel
     python3 -m pip install dist/lohmega-bblogger-*.tar.gz
 
-#bblog -h
-#bblog test -vvvv -a"F2:1F:2B:52:48:9E"
