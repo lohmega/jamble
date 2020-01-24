@@ -121,7 +121,8 @@ class BlueBerryClient():
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         await self._bc.disconnect()
 
-    def _on_disconnect(self, client):
+    def _on_disconnect(self, client, _x=None):
+        # _x only in bleak > 0.6 
         logger.warning('Device {} unexpected disconnect'.format(self._bc.address))
         if not client is self._bc:
             logger.warning('Unexpected disconnect callback from {} (self:{})'.format(client.address, self._bc.address))

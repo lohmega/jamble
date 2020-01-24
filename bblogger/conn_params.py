@@ -90,8 +90,11 @@ def verify_configured():
         '\'python3 {} --create-service\''.format(path.realpath(__file__))
         ))
 
-def _create_service(hci='hci0', vmax=160, daemon_reload=False):
-
+def _create_service(hci='hci0', vmax=160):
+    '''
+    note: `systemctl daemon-reload` will not run new script
+    but `systemctl restart bluetooth` will.
+    '''
     assert (geteuid() == 0)
     assert path.exists('/etc/systemd/system')
     assert path.exists('/sys/kernel/debug/bluetooth/{}'.format(hci))
@@ -108,7 +111,8 @@ def _create_service(hci='hci0', vmax=160, daemon_reload=False):
         '# Setting default conn_max_interval',
         '# to avoid disconnect of some BLE devices that require it',
         '[Service]',
-        'ExecStartPre=/bin/bash -c \'echo {} > {}\''.format(vmax, vmaxpath)
+        'ExecStartPre=/bin/bash -c \'echo {} > {}\''.format(vmax, vmaxpath),
+        ''
     ]
 
     logger.debug('---- BEGIN %s ----' % _BT_SERVICE_FILE)
@@ -117,24 +121,17 @@ def _create_service(hci='hci0', vmax=160, daemon_reload=False):
     logger.debug('---- END ----')
     with open(_BT_SERVICE_FILE, 'w') as f:
         f.write('\n'.join(lines))
-   
-    if daemon_reload:
-        # reload dameons to run the newly created startup service
-        import subprocess
-        logger.info('Reloading bluetooth daemon')
-        p = subprocess.Popen(['systemctl', 'daemon-reload'], stdout=subprocess.PIPE)
-        out, err = p.communicate()
-        if p.returncode:
-            raise RuntimeError('systemctl error %s' % err)
-    else:
-        # update it now and let the service do it next time after reboot/reload
-        with open(vmaxpath, 'w') as f:
-            f.write(str(int(vmax)))
+
+    # update it now and let the service do it next time after reboot
+    with open(vmaxpath, 'w') as f:
+        f.write(str(int(vmax)))
 
 
 def main():
     import argparse
-    parser = argparse.ArgumentParser(description=('Linux only. '
+    parser = argparse.ArgumentParser(
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter,
+            description=('Linux only. '
                'Configure BLE interface connection parameters. '
                'Requires root'))
 
@@ -146,7 +143,7 @@ def main():
     parser.add_argument('--show', 
             default=False, 
             action='store_true',
-            help='')
+            help='Show status and parameters')
 
     parser.add_argument('--interval_max', type=int,
             default=None, 
@@ -188,6 +185,8 @@ def main():
  
         v = _debugfs_get(args.hci, 'conn_max_interval')
         print('conn_max_interval: %d (%.2f ms)' % (v, _raw2ms(v)))
+
+        print('configured: %s' % str(is_configured()))
 
     if not args.interval_min is None:
         _debugfs_set(args.hci, 'conn_min_interval', args.interval_min)
