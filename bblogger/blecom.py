@@ -296,7 +296,7 @@ class BlueBerryClient:
                 else:
                     clrMask |= enmask
             else:
-                logger.debug('Ignoring unknown conifg field "{}"'.format(k))
+                logger.debug("Ignoring unknown config field '{}'".format(k))
 
         logging = kwargs.get("logging")
         if logging is not None:
