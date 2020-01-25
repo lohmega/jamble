@@ -1,7 +1,7 @@
 # jamble
-command line tool for interacting with Lohmea BlueBerry logger over Bluetooth LE 
+command line tool for interacting with the Lohmega BlueBerry logger over Bluetooth LE 
 
-Should work on Linux, MacOS and windows but Windows untested and there is a bug
+Should work on Linux, MacOS and Windows. Windows is however untested at this stage and there is a bug
 in bleak ver <= 0.5.1 for MacOS. Fixes is in the develop branch and hopefull
 included in next release.
 
