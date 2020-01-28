@@ -34,7 +34,7 @@ async def do_config_read(**kwargs):
 
     for key, val in conf.items():
         if key == "pwstatus":
-            v = "{} ({})".format(val, bbl.pw_status_to_str(val))
+            v = "{} ({})".format(val, bbl.enum2str(PW_STATUS, val))
         elif key == "interval":
             v = str(val)
         else:
@@ -56,6 +56,11 @@ async def do_set_password(**kwargs):
     async with bbl.BlueBerryClient(**kwargs) as bbc:
         await bbc.set_password(password)
 
+async def do_device_info(**kwargs):
+    async with bbl.BlueBerryClient(**kwargs) as bbc:
+       d = await bbc.device_info() 
+    for k, v in d.items():
+        print(k, ':', v)
 
 async def do_fetch(**kwargs):
     ofile = kwargs.get("file")
@@ -261,6 +266,14 @@ def parse_args():
     )
     sp.set_defaults(_actionfunc=do_set_password)
     sps.append(sp)
+
+    # ---- DEVICE-INFO---------------------------------------------------
+    sp = subparsers.add_parser(
+        "device-info",
+        parents=[common],
+        description="Get device information. Firmware version etc"
+    )
+    sp.set_defaults(_actionfunc=do_device_info)
 
     # ---- FETCH -------------------------------------------------------------
     sp = subparsers.add_parser(

@@ -1,5 +1,6 @@
 import asyncio
 import logging
+from enum import Enum 
 from collections import OrderedDict
 from platform import system
 
@@ -20,6 +21,106 @@ logger = logging.getLogger(__name__)
 UUID = lambda x: str(x)
 
 
+class CMD_RSP(Enum):
+    """ Command response codes. (aka 'RESP_...')"""
+
+    # fmt: off
+    SUCCESS                     =  0x00
+    ERROR                       =  0x01
+    ERROR_PASSCODE_FORMAT       =  0x02
+    ERROR_COMPASS_NO_MOTION     =  0x03
+    ERROR_COMPASS_LARGE_MAGNET  =  0x04
+    ERROR_ACCESS_DENIED         =  0x05
+    ERROR_UNKNOWN_CMD           =  0x06
+    COMPLETE                    =  0x80
+    ERROR_CALIBRATION           =  0x81
+    PROGRESS                    =  0x82
+    # fmt: on
+
+class CMD_REQ(Enum):
+    """ Command (request) codes (aka 'BB_LOG_CMD_...') """
+
+    # fmt: off
+    UPDATE_READ_PTR     =  0x00
+    BLINK_LED           =  0x01
+    ENTER_DFU           =  0x02
+    CALIBRATE_GYRO      =  0x03
+    CALIBRATE_COMPASS   =  0x04
+    CALIBRATE_END       =  0x05
+    SET_PASSCODE        =  0x06
+    GET_PASSCODE_STATE  =  0x07
+    START_CAL           =  0x08
+    SET_CAL_VALUE       =  0x09
+    END_CAL             =  0x0A
+    UPDATE_GET_MEM      =  0x70
+    # fmt: on
+
+class PW_STATUS(Enum):
+    """ Password status codes (aka 'BB_PASSCODE_...') """
+
+    # fmt: off
+    INIT       = 0x00 # the unit has not been configured yet
+    UNVERIFIED = 0x01 # correct password has not been entered yet
+    VERIFIED   = 0x02 # correct password has been entered
+    DISABLED   = 0x03 # no password is needed
+    # fmt: on
+
+def enum2str(enumclass, val):
+    """
+    enumclass - a Enum class, either instance or class 
+    """
+    try:
+        return enumclass(val).name
+    except ValueError:
+        return "{}.<unknown {}>".format(enumclass.__name__, val)
+
+
+
+def _uuid_std(n):
+    """ Bluetooth LE uuid as defined by specs """
+    base = "0000{:04x}-0000-1000-8000-00805f9b34fb"
+    return UUID(base.format(n))
+
+def _bbuuid(n):
+    base = "c9f6{:04x}-9f9b-fba4-5847-7fd701bf59f2"
+    return UUID(base.format(n))
+
+
+# GATT Services and Characteristics UUIDS
+class UUIDS:
+    # Log (Service)
+    S_LOG = _bbuuid(0x002)
+    # Real time data characteristic (protobuf)
+    C_SENSORS_RTD = _bbuuid(0x0022)
+    # Stored log characteristic (protobuf)
+    C_SENSORS_LOG = _bbuuid(0x0021)
+    # Command TX characteristic (opcode, [data])
+    C_CMD_TX = _bbuuid(0x001A)
+    # Command RX characteristic notification (rspcode, [data])
+    C_CMD_RX = _bbuuid(0x0023)
+    # log on/off (uint32)
+    C_CFG_LOG_ENABLE = _bbuuid(0x00)
+    # bitfield (uint32)
+    C_CFG_SENSOR_ENABLE = _bbuuid(0x01)
+    # log interval in seconds (uint32)
+    C_CFG_INTERVAL = _bbuuid(0x02)
+    # 
+    # Device Information (Service)
+    S_DEVICE_INFORMATION = _uuid_std(0x180a)
+    # Serial Number (String)
+    C_SERIAL_NUMBER = _uuid_std(0x2a25)
+    # Software Revision (String)
+    C_SOFTWARE_REV = _uuid_std(0x2a28)
+    # Manufacturer Name (String)
+    C_MANUFACTURER = _uuid_std(0x2a29)
+    # 
+    # Generic Attribute Profile (Service)
+    S_GENERIC_ATTRIBUTE_PROFILE = _uuid_std(0x1801)
+    # Service Changed ()
+    C_SERVICE_CHANGED = _uuid_std(0x2a05)
+   
+
+
 class ATimeoutEvent(asyncio.Event):
     """ 
     Same as asyncio.Event but wait has a timeout option like threading.Event 
@@ -38,67 +139,7 @@ class ATimeoutEvent(asyncio.Event):
 
         return True
 
-
-# Command response codes.
-CMD_RESP_CODES = {
-    0x00: "SUCCESS",
-    0x01: "ERROR",
-    0x02: "ERROR_PASSCODE_FORMAT",
-    0x03: "ERROR_COMPASS_NO_MOTION",
-    0x04: "ERROR_COMPASS_LARGE_MAGNET",
-    0x05: "ERROR_ACCESS_DENIED",  # Password protected (no check if cmd is valid)
-    0x06: "ERROR_UNKNOWN_CMD",
-    0x80: "COMPLETE",
-    0x81: "ERROR_CALIBRATION",
-    0x82: "PROGRESS",
-}
-
-
-class PW_STATUS:
-    INIT = 0x00
-    UNVERIFIED = 0x01
-    VERIFIED = 0x02
-    DISABLED = 0x03
-
-
-PW_STATUS_TRANSLATE = {
-    0x00: "init",  #'the unit has not been configured yet',
-    0x01: "unverified",  #'the correct password has not been entered yet',
-    0x02: "verified",  #'the correct password has been entered',
-    0x03: "disabled",  #'no password is needed',
-}
-
-
-def pw_status_to_str(rc):
-    return PW_STATUS_TRANSLATE[rc]
-
-
-def _bbuuid(n):
-    base = "c9f6{:04x}-9f9b-fba4-5847-7fd701bf59f2"
-    return UUID(base.format(n))
-
-
-# GATT Services and Characteristics UUIDS
-class UUIDS:
-    # Log service
-    S_LOG = _bbuuid(0x002)
-    # Real time data characteristic
-    C_SENSORS_RTD = _bbuuid(0x0022)
-    # Stored log characteristic
-    C_SENSORS_LOG = _bbuuid(0x0021)
-    # Command TX characteristic
-    C_CMD_TX = _bbuuid(0x001A)
-    # Command RX characteristic (as notification)
-    C_CMD_RX = _bbuuid(0x0023)
-    # uint32. log on/off
-    C_CFG_LOG_ENABLE = _bbuuid(0x00)
-    # uint32 bitfield
-    C_CFG_SENSOR_ENABLE = _bbuuid(0x01)
-    # uint32 log interval in seconds
-    C_CFG_INTERVAL = _bbuuid(0x02)
-
-
-class BlueBerryClient:
+class BlueBerryClient():
     """
     BlueBerry logger Bluetooth LE Client
     """
@@ -137,7 +178,7 @@ class BlueBerryClient:
                 )
             )
             return
-        # abort if someone is waiting on notifications and device disconnect
+        n# abort if someone is waiting on notifications and device disconnect
         if not self._evt_cmd.is_set():
             self._evt_cmd.set()
 
@@ -175,6 +216,11 @@ class BlueBerryClient:
         ba = await self._bc.read_gatt_char(cuuid)
         assert len(ba) == 4
         return int.from_bytes(ba, byteorder="little", signed=False)
+
+    async def _read_str(self, cuuid):
+        """ read string """
+        ba = await self._bc.read_gatt_char(cuuid)
+        return ba.decode("utf-8") # or ascii
 
     async def _cmd(self, txdata, rxsize=None):
         """ first byte in txdata is the cmd id """
@@ -228,15 +274,14 @@ class BlueBerryClient:
 
         Password must be 8 chars and ascii only
         """
-        # 0x06 = command code
-        data = bytearray([0x06])  
+        data = bytearray([CMD_REQ.SET_PASSCODE])  
         assert len(s) == 8
         data.extend(s)
         await self._cmd(data)
 
     async def _pw_status(self):
         """ get password status """
-        rsp = await self._cmd([0x07], 2)
+        rsp = await self._cmd([CMD_REQ.GET_PASSCODE_STATE], 2)
         return rsp[1]
 
     async def set_password(self, password):
@@ -271,7 +316,7 @@ class BlueBerryClient:
         conf["interval"] = val
 
         val = await self._pw_status()
-        conf["pwstatus"] = val  #'{} ({})'.format(val, pw_status_to_str(val))
+        conf["pwstatus"] = val
 
         enbits = await self._read_u32(UUIDS.C_CFG_SENSOR_ENABLE)
 
@@ -318,6 +363,21 @@ class BlueBerryClient:
                     enMaskOld, enMaskNew
                 )
             )
+
+    async def device_info(self, debug=False):
+        if debug:
+            services = await self._bc.get_services()
+            for s in services:
+                logger.debug("Characteristic for service: %s" % str(s))
+                for c in s.characteristics:
+                    logger.debug("  %s" % str(c))
+        d = {} 
+        d["manufacturer"] = await self._read_str(UUIDS.C_MANUFACTURER)
+        d["software_rev"] = await self._read_str(UUIDS.C_SOFTWARE_REV)
+        d["serial_number"] = await self._read_str(UUIDS.C_SERIAL_NUMBER)
+        return d
+        
+        
 
     async def fetch(self, ofile=None, rtd=False, fmt="txt", num=None, **kwargs):
 

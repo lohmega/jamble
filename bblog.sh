@@ -26,7 +26,7 @@ PYTHONPATH="$SCRIPTPATH:$PYTHONPATH"
 if [ -n "$BLEAK" ]; then
     BLEAK=$(_realpath "$BLEAK")
     #echo "BLEAK $BLEAK"
-    PYTHONPATH="$BLEAK/bleak:$PYTHONPATH" 
+    PYTHONPATH="$BLEAK:$PYTHONPATH" 
 fi
 
 # you can verify import paths with the following command
