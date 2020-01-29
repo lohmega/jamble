@@ -34,7 +34,7 @@ async def do_config_read(**kwargs):
 
     for key, val in conf.items():
         if key == "pwstatus":
-            v = "{} ({})".format(val, bbl.enum2str(PW_STATUS, val))
+            v = "{} ({})".format(val, bbl.enum2str(bbl.PASSCODE_STATUS, val))
         elif key == "interval":
             v = str(val)
         else:
@@ -58,9 +58,9 @@ async def do_set_password(**kwargs):
 
 async def do_device_info(**kwargs):
     async with bbl.BlueBerryClient(**kwargs) as bbc:
-       d = await bbc.device_info() 
+        d = await bbc.device_info() 
     for k, v in d.items():
-        print(k, ':', v)
+        print(k, ":", v)
 
 async def do_fetch(**kwargs):
     ofile = kwargs.get("file")
@@ -85,6 +85,9 @@ async def do_test(**kwargs):
     kwargs["timeout"] = 5
     logger.info("args: %s" % str(kwargs))
     await do_scan(**kwargs)
+
+    logger.info("Testing device-info")
+    await do_device_info(**kwargs)
 
     logger.info("Testing config-read")
     await do_config_read(**kwargs)

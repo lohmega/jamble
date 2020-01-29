@@ -117,7 +117,7 @@ def _create_service(hci="hci0", vmax=160):
     logger.debug(
         "Setting default conn_max_interval to %d (%f ms)" % (vmax, _raw2ms(vmax))
     )
-    vmaxpath = __bt_debugfs_path(hci, "conn_max_interval")
+    vmaxpath = _debugfs_path(hci, "conn_max_interval")
     # service content
     lines = [
         "# Setting default conn_max_interval",

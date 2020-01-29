@@ -21,122 +21,11 @@ except ImportError:
 
 
 from bblogger import bb_log_entry_pb2
+from bblogger.defs import BlueBerryLogEntryFields
 
 logger = logging.getLogger(__name__)
 
 TXT_COL_WIDTH = 10
-
-
-class _DataField:
-    def __init__(
-        self,
-        enmask,
-        pbname,
-        symbol="",
-        unit="",
-        tounit=None,
-        alias=None,
-        subfields=None,
-        txtfmt="4.3f",
-    ):
-        self.enmask = enmask
-        self.pbname = pbname
-        self.symbol = symbol
-        self.unit = unit
-        self.tounit = tounit
-        self.alias = alias
-        self.txtfmt = "{{0: {}}}".format(txtfmt)
-        if subfields:
-            self._colname = ["{}_{}".format(self.symbol, x) for x in subfields]
-        else:
-            self._colname = [self.symbol]
-
-    def isSensor(self):
-        return self.enmask is not None
-
-    @property
-    def cliName(self):
-        return self.apiName
-
-    @property
-    def apiName(self):
-        if self.alias:
-            return self.alias
-        else:
-            return self.pbname
-
-    @property
-    def colNames(self):
-        return self._colname
-
-
-# Names used in iOS app csv output:
-#     Unix time stamp,
-#     Acceleration x (m/s²),
-#     Acceleration y (m/s²),
-#     Acceleration z (m/s²),
-#     Magnetic field x (µT),
-#     Magnetic field y (µT),
-#     Magnetic field z (µT),
-#     Rotation rate x (°/s),
-#     Rotation rate y (°/s),
-#     Rotation rate z (°/s),
-#     Illuminance (lux),
-#     Pressure (hPa),
-#     Rel. humidity (%),
-#     Temperature (C),
-#     UV index,
-#     Battery voltage (V)
-_dfList = [
-    _DataField(0x0001, "pressure", "p", "hPa", lambda x: x / 100.0),
-    _DataField(0x0002, "rh", "rh", "%", lambda x: x / 10.0, "humid"),  # humidity
-    _DataField(0x0004, "temperature", "t", "C", lambda x: x / 1000.0, "temp"),
-    _DataField(
-        0x0008,
-        "compass",
-        "m",
-        "uT",
-        lambda x: x * 4915.0 / 32768.0,
-        subfields=("x", "y", "z"),
-    ),
-    _DataField(
-        0x0010,
-        "accelerometer",
-        "a",
-        "m/s^2",
-        lambda x: x * 2.0 * 9.81 / 32768.0,
-        "accel",
-        subfields=("x", "y", "z"),
-    ),
-    _DataField(
-        0x0020,
-        "gyro",
-        "g",
-        "dps",
-        lambda x: x * 250.0 / 32768.0,
-        subfields=("x", "y", "z"),
-    ),
-    _DataField(0x0040, "lux", "L", "lux", lambda x: x / 1000.0),  #  illuminance
-    _DataField(0x0100, "uvi", "UVi", "", lambda x: x / 1000.0),
-    _DataField(0x0200, "battery_mv", "bat", "V", lambda x: x / 1000.0, "batvolt"),
-    # texhnically not sensors, but use same class.
-    _DataField(None, "timestamp", "TS", "s", lambda x: float(x), txtfmt="7.0f"),
-    _DataField(None, "gpio0_mv", "gp0", "mV", lambda x: x * 1.0),
-    _DataField(None, "gpio1_mv", "gp1", "mV", lambda x: x * 1.0),
-]
-
-_sensors = {}
-_dfByPbName = {}
-_dfByColName = {}
-for df in _dfList:
-    if df.isSensor():
-        _sensors[df.apiName] = df
-    _dfByPbName[df.pbname] = df
-    for colName in df.colNames:
-        _dfByColName[colName] = df
-
-SENSORS = _sensors
-# FIELDS = _dfList
 
 
 class BlueBerryDeserializer:
@@ -157,6 +46,14 @@ class BlueBerryDeserializer:
         self._prevKeySet = None
         self._msgCount = 0
         self._data = []
+
+        self._fldByColName = {}
+        self._fldByPbName = {}
+        for x in BlueBerryLogEntryFields:
+            fld = x.value
+            self._fldByPbName[fld.pbname] = fld
+            for colname in fld.colnames:
+                self._fldByColName[colname] = fld
 
         self._fmt = ofmt
 
@@ -186,7 +83,7 @@ class BlueBerryDeserializer:
         """
         od = OrderedDict()
         for descr in pb.DESCRIPTOR.fields:
-            df = _dfByPbName[descr.name]
+            fld = self._fldByPbName[descr.name]
             val = getattr(pb, descr.name)
             if descr.label == descr.LABEL_REPEATED:
                 # HasField() do not work on repeated, use len instead. hack
@@ -195,15 +92,15 @@ class BlueBerryDeserializer:
 
                 if columnize:
                     for i in range(0, len(val)):
-                        name = df.colNames[i]
+                        name = fld.colnames[i]
                         od[name] = val[i]
                 else:
-                    name = df.colNames[0]
+                    name = fld.colnames[0]
                     od[name] = list(val)  # [x for x in val]
             else:
                 if not pb.HasField(descr.name):
                     continue
-                name = df.colNames[0]
+                name = fld.colnames[0]
                 od[name] = val
         return od
 
@@ -222,8 +119,8 @@ class BlueBerryDeserializer:
                 name = k.ljust(TXT_COL_WIDTH)
                 names.append(name)
 
-                df = _dfByColName[k]
-                unit = "({})".format(df.unit).ljust(TXT_COL_WIDTH)
+                fld = self._fldByColName[k]
+                unit = "({})".format(fld.unit).ljust(TXT_COL_WIDTH)
                 units.append(unit)
 
             print(*names, sep="", file=self._ofile)
@@ -231,8 +128,8 @@ class BlueBerryDeserializer:
 
         svals = [None] * len(keys)
         for i, k in enumerate(keys):
-            df = _dfByColName[k]
-            s = df.txtfmt.format(vals[i])
+            fld = self._fldByColName[k]
+            s = fld.txtfmt.format(vals[i])
             svals[i] = s.ljust(TXT_COL_WIDTH)
 
         print(*svals, sep="", file=self._ofile)
@@ -264,7 +161,7 @@ class BlueBerryDeserializer:
         if self._raw:
             vals = odmsg.values()
         else:
-            vals = [_dfByColName[k].tounit(v) for k, v in odmsg.items()]
+            vals = [self._fldByColName[k].tounit(v) for k, v in odmsg.items()]
 
         assert len(keys) == len(vals)
 
@@ -305,4 +202,6 @@ class BlueBerryDeserializer:
 
             self._bytes = self._bytes[msgSize + 1 :]  # pop
             self._msgCount += 1
+
+
 
