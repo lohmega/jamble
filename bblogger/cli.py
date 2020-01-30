@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-# command line tool for interacting with Lohmea BlueBerry logger over Bluetooth LE
+# command line tool for interacting with Lohmega BlueBerry logger over Bluetooth LE
 #
 import logging
 import asyncio
@@ -228,7 +228,7 @@ def parse_args():
     sp = subparsers.add_parser(
         "config-write",
         parents=[common],
-        description="configure device"
+        description="Configure device"
     )
     sp.set_defaults(_actionfunc=do_config_write)
     cfa = sp.add_argument_group("Config fields", description="")
@@ -245,7 +245,7 @@ def parse_args():
     # cfa.add_argument('--all',
     # metavar='ONOFF',
     # type=onoffbool,
-    # help='All sensors on|off. Can be combined with indvidual sensors \
+    # help='All sensors on|off. Can be combined with induvidual sensors \
     # on|off for easier configuration')
 
     cfa.add_argument(
@@ -289,7 +289,7 @@ def parse_args():
     sp.add_argument(
         "--rtd",
         action="store_true",
-        help="Fetch realtime sensor data instead of logged. Will always show \
+        help="Fetch real-time sensor data instead of logged. Will always show \
             all sensors regardless of config",
     )
 
@@ -312,7 +312,7 @@ def parse_args():
     sp = subparsers.add_parser(
         "test",
         parents=[common],
-        description="Test different actions. takes a some time to complete",
+        description="Test different actions. Takes a some time to complete",
     )
     sp.set_defaults(_actionfunc=do_test)
     sps.append(sp)

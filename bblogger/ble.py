@@ -50,7 +50,7 @@ class BlueBerryClient():
         self._evt_cmd = ATimeoutEvent()
         self._evt_fetch = ATimeoutEvent()
 
-        # not in all backend (yet). will work without it but might hang forver
+        # not in all backend (yet). will work without it but might hang forever
         try:
             self._bc.set_disconnected_callback(self._on_disconnect)
         except NotImplementedError:
@@ -149,7 +149,7 @@ class BlueBerryClient():
         if not await self._evt_cmd.wait(6):
             logger.error("notification timeout")
 
-        # hide missleading error on unexpected disconnect
+        # hide misleading error on unexpected disconnect
         if await self._bc.is_connected():
             await self._bc.stop_notify(rxuuid)
 
@@ -158,7 +158,7 @@ class BlueBerryClient():
         assert len(rxdata) == rxsize
 
         if rxsize and rxdata[0] != (txdata[0] | 0x80):
-            raise RuntimeError("Unexpected cmd id in respone {}".format(rxdata))
+            raise RuntimeError("Unexpected cmd id in response {}".format(rxdata))
 
         return rxdata
 
@@ -331,8 +331,8 @@ async def scan(timeout=None, outfile=None, **kwargs):
             if suuid.lower() in advertised or suuid.upper() in advertised:
                 match = True
         elif "BlueBerry" in d.name:
-            # Advertised UUIDs sometimes slow to retrive
-            logger.warning("no mathcing service uuid but matching name {}".format(d))
+            # Advertised UUIDs sometimes slow to retrieve
+            logger.warning("no matching service uuid but matching name {}".format(d))
             match = True
         else:
             logger.debug("ignoring device={}".format(d))

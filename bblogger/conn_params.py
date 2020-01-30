@@ -16,7 +16,7 @@
 #    conn_min_interval = 24 (30 ms)
 #    conn_max_interval = 40 (50 ms)
 #
-# Note: Raw values are converted to milliseconds by multipy with 1.25, this is
+# Note: Raw values are converted to milliseconds by multiply with 1.25, this is
 # part of the Bluetooth specifigation.
 #
 # Setting default conn_max_interval
@@ -29,11 +29,11 @@
 # It might also be possible that this is a undocumneted setting in
 # /etc/bluetooth/main.conf
 #
-# Paramters accessible in debugfs as root. Example
+# Parameters accessible in debugfs as root. Example
 #     echo 80 | sudo dd of=/sys/kernel/debug/bluetooth/hci0/conn_max_interval
 # but these changes are reverted after reboot.
 # Could have a launch script but as most kernels do not allow scripts
-# to be "owened by root" (i.e. started by user without sudo but with root access)
+# to be "owned by root" (i.e. started by user without sudo but with root access)
 # so this will not work.
 #
 # Easiest to tell systemd to do this at startup.
@@ -155,7 +155,7 @@ def main():
         "--hci", 
         type=str, 
         default="hci0", 
-        help="BT interface",
+        help="Bluetooth interface",
     )
 
     parser.add_argument(
