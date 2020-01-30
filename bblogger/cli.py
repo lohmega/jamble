@@ -62,6 +62,10 @@ async def do_device_info(**kwargs):
     for k, v in d.items():
         print(k, ":", v)
 
+async def do_dfu(**kwargs):
+    async with bbl.BlueBerryClient(**kwargs) as bbc:
+        d = await bbc.enter_dfu() 
+
 async def do_fetch(**kwargs):
     ofile = kwargs.get("file")
     if ofile is None:
@@ -309,6 +313,16 @@ def parse_args():
     )
     sps.append(sp)
 
+    # ---- DFU -------------------------------------------------------------
+    sp = subparsers.add_parser(
+        "dfu",
+        parents=[common],
+        description="Device firmware upgrade"
+    )
+    sp.set_defaults(_actionfunc=do_dfu)
+    sps.append(sp)
+
+    # ---- TEST -------------------------------------------------------------
     sp = subparsers.add_parser(
         "test",
         parents=[common],

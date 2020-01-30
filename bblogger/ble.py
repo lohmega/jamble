@@ -259,6 +259,9 @@ class BlueBerryClient():
                 )
             )
 
+    async def enter_dfu(self):
+        await self._cmd([CMD_OPCODE.ENTER_DFU])
+
     async def device_info(self, debug=False):
         if debug:
             services = await self._bc.get_services()
