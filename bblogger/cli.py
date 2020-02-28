@@ -319,6 +319,11 @@ def parse_args():
         parents=[common],
         description="Device firmware upgrade"
     )
+
+    sp.add_argument("-p",
+        "--package", 
+        help="Nrf DFU zip package",
+    )
     sp.set_defaults(_actionfunc=do_dfu)
     sps.append(sp)
 

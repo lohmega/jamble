@@ -10,18 +10,20 @@ class CMD_OPCODE(IntEnum):
     """ Command (request) codes (aka 'BB_LOG_CMD_...') """
 
     # fmt: off
-    UPDATE_READ_PTR     =  0x00
-    BLINK_LED           =  0x01
-    ENTER_DFU           =  0x02
-    CALIBRATE_GYRO      =  0x03
-    CALIBRATE_COMPASS   =  0x04
-    CALIBRATE_END       =  0x05
-    SET_PASSCODE        =  0x06
-    GET_PASSCODE_STATE  =  0x07
-    START_CAL           =  0x08
-    SET_CAL_VALUE       =  0x09
-    END_CAL             =  0x0A
-    UPDATE_GET_MEM      =  0x70
+    UPDATE_READ_PTR      =  0x00
+    BLINK_LED            =  0x01
+    ENTER_DFU            =  0x02
+    CALIBRATE_GYRO       =  0x03
+    CALIBRATE_COMPASS    =  0x04
+    CALIBRATE_END        =  0x05
+    SET_PASSCODE         =  0x06
+    GET_PASSCODE_STATE   =  0x07
+    SET_DISABLE_CAL_CORR =  0x08
+    GET_DISABLE_CAL_CORR =  0x09
+    CAL_CLEAR_TEMP_LUT   =  0x0A
+    CAL_SET_TEMP_LUT_VAL =  0x0B
+    CAL_SAVE_TEMP_LUT    =  0x0C
+    UPDATE_GET_MEM       =  0x70
     # fmt: on
 
 
