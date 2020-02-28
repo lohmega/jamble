@@ -534,3 +534,10 @@ async def scan_dfu_devices(app_address=None, timeout=10):
     return devices
 
 
+async def do_dfu(dfu_address, zipfile):
+    # TODO find device before unip
+    imgpkg = DfuImagePkg(zipfile)
+    async with DfuDevice(address=dfu_address) as dev:
+        await dev.send_image_package(imgpkg)
+
+
