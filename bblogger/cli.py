@@ -6,13 +6,17 @@ import asyncio
 import sys
 import argparse
 import traceback
-
+from os.path import realpath, abspath, expanduser
 import bblogger as bbl
 
 from bleak import __version__ as bleak_version
-
+try:
+    from bblogger.dfu import device_firmware_upgrade
+except ImportError:
+    pass
 
 logger = logging.getLogger(__name__)
+
 
 
 async def do_scan(**kwargs):
@@ -47,7 +51,6 @@ async def do_config_write(**kwargs):
     async with bbl.BlueBerryClient(**kwargs) as bbc:
         await bbc.config_write(**kwargs)
 
-
 async def do_set_password(**kwargs):
     password = kwargs.get("password")
     if password is None:
@@ -62,9 +65,25 @@ async def do_device_info(**kwargs):
     for k, v in d.items():
         print(k, ":", v)
 
-async def do_dfu(**kwargs):
-    async with bbl.BlueBerryClient(**kwargs) as bbc:
+async def do_dfu(address, package, boot, **kwargs):
+    if address is None:
+        raise ValueError("No address given")
+
+    if boot is None and package is None:
+        raise ValueError("No package given")
+
+    if boot == "app":
+        raise NotImplementedError("TODO boot app reset abort")
+    
+    logger.info("Entering bootloader ...")
+    async with bbl.BlueBerryClient(address=address, **kwargs) as bbc:
         d = await bbc.enter_dfu() 
+
+    if boot == "bl":
+        return
+
+    logger.info("Re-discover device in DFU mode ...")
+    await device_firmware_upgrade(address=address, package=package)
 
 async def do_fetch(**kwargs):
     ofile = kwargs.get("file")
@@ -141,6 +160,10 @@ def parse_args():
         if i < 0:
             raise argparse.ArgumentTypeError("%s is an not a positive int value" % s)
         return i
+
+    def type_fullpath(s):
+        """ expand "~" and relative paths """
+        return abspath(expanduser(s))
 
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument(
@@ -320,8 +343,18 @@ def parse_args():
         description="Device firmware upgrade"
     )
 
+    sp.add_argument(
+        "--boot",
+        #action="store_true",
+	default=None,
+	nargs="?",
+	choices=["bl", "app"],
+        help="Boot in to bootloader (bl) or application (app) then exit."
+    )
+
     sp.add_argument("-p",
         "--package", 
+        type=type_fullpath,
         help="Nrf DFU zip package",
     )
     sp.set_defaults(_actionfunc=do_dfu)
@@ -371,6 +404,13 @@ def print_versions():
 
 def set_verbose(verbose_level):
     loggers = [logging.getLogger("bblogger"), logger]
+
+    for name in logging.root.manager.loggerDict:
+    	if "nordicsemi" in name:
+             #if any(s in name for s in ["nordicsemi", "dfu"]):
+             x = logging.getLogger(name)
+             if x not in loggers:
+                 loggers.append(x)
 
     if verbose_level <= 0:
         level = logging.WARNING

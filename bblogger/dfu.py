@@ -1,16 +1,15 @@
-from os.path import join as path_join
-from os.path import getsize
 import asyncio
 import logging
 import time
+from sys import platform
+from os.path import join as path_join
+from os.path import getsize, realpath
 from shutil import rmtree
 from tempfile import mkdtemp
 from binascii import crc32
 from uuid import UUID
-
 # Nordic libraries
 from nordicsemi.dfu.package import Package
-
 
 from nordicsemi.dfu.dfu_transport import (
     OP_CODE, 
@@ -19,6 +18,8 @@ from nordicsemi.dfu.dfu_transport import (
     operation_txd_pack, 
     operation_rxd_unpack, 
     OperationResponseTimeoutError,
+    ValidationException,
+    NordicSemiException,
 )
 
 from bleak import BleakClient, discover
@@ -26,11 +27,6 @@ from bleak.exc import BleakError
 
 logger = logging.getLogger(__name__)
 
-class NordicSemiException(Exception):
-    pass
-
-class ValidationException(Exception):
-    pass
 
 class _UUIDWithStrCmp(UUID):
     """ Same as UUID but compares to string (not case sensitive) """
@@ -216,6 +212,9 @@ class DfuImagePkg:
         """
         @param zip_file_path: Path to the zip file with the firmware to upgrade
         """
+        zip_file_path  = realpath(zip_file_path)
+        print(zip_file_path)
+
         self.temp_dir     = mkdtemp(prefix="nrf_dfu_")
         self.unpacked_zip = path_join(self.temp_dir, 'unpacked_zip')
         self.manifest     = Package.unpack_package(zip_file_path, self.unpacked_zip)
@@ -243,6 +242,7 @@ class DfuImagePkg:
         Destructor removes the temporary directory for the unpacked zip
         :return:
         """
+        logger.debug("Removing {}".format(self.temp_dir))
         rmtree(self.temp_dir)
 
     def get_total_size(self):
@@ -273,24 +273,56 @@ class DfuDevice:
         # #define GATT_MTU_SIZE_DEFAULT 23
         self.packet_size = 20
 
-        self._evt_opcmd = _ATimeoutEvent()
+        self._cp_notif_evt = asyncio.Event()
+        self._cp_notif_data = []
+
         self.prn = 0 #TODO prn not yet supported
         self.RETRIES_NUMBER = 3
 
-    async def __aenter__(self):
-        logger.debug("{} - connecting...".format(self.address))
+    async def connect(self):
+        logger.debug("Connecting {}...".format(self.address))
         await self._bleclnt.connect()
+        await self._bleclnt.start_notify(BLE_UUID.C_DFU_CONTROL_POINT, self._on_cp_notif)
+
+    async def disconnect(self):
+        logger.debug("Disconnecting {} ...".format(self.address))
+        await self._bleclnt.disconnect()
+
+    async def __aenter__(self):
+        await self.connect()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
-        logger.debug("{} - disconnecting...".format(self.address))
-        await self._bleclnt.disconnect()
+        await self.disconnect()
+
+    def _on_cp_notif(self, sender, data):
+        cpuuid = BLE_UUID.C_DFU_CONTROL_POINT
+        # sender is str. should be uuid!?
+        if sender != cpuuid:
+            logger.warning(
+                "unexpected notify response \
+                    from {} expected {}".format(
+                    sender, cpuuid
+                )
+            )
+            return
+        self._cp_notif_data.append(data)
+        self._cp_notif_evt.set()
 
     async def cp_cmd(self, opcode, **kwargs):
+        return await asyncio.wait_for(self.__cp_cmd(opcode, **kwargs), timeout=20)
+
+    async def __cp_cmd(self, opcode, **kwargs):
         """ 
         control point (cp) characteristic command - handles request, 
-        parses response and chech success.
-        returns payload (if any)
+        parses response and check success.
+        returns payload (if any).
+
+        assumes payload fits in a single transfer/packet.
+
+        note: enable and disable control point notifications for every command/operation do not work.
+        unclear why - have not investigated it.
+        
         """
         cpuuid = BLE_UUID.C_DFU_CONTROL_POINT
         txdata = operation_txd_pack(opcode, **kwargs)
@@ -298,33 +330,23 @@ class DfuDevice:
             # bytes object not supported in txdbus
             txdata = bytearray(txdata)
 
-        self._evt_opcmd.clear()
+        if len(self._cp_notif_data):
+            logger.warning("Unread control point notifications")
+            self._cp_notif_data = []
 
-        rxdata = bytearray()
-
-        def response_handler(sender, data):
-            # sender is str. should be uuid!?
-            if sender != cpuuid:
-                logger.warning(
-                    "unexpected notify response \
-                        from {} expected {}".format(
-                        sender, cpuuid
-                    )
-                )
-                return
-            rxdata.extend(data)
-            logger.debug("cp_cmd RXD:{}".format(data))
-            self._evt_opcmd.set()
-
-        await self._bleclnt.start_notify(cpuuid, response_handler)
+        self._cp_notif_evt.clear()
+        logger.debug("cmd {} TXD:{}".format(opcode, txdata))
         await self._bleclnt.write_gatt_char(cpuuid, txdata, response=True)
 
-        if not await self._evt_opcmd.wait(6):
+        try:
+            await asyncio.wait_for(self._cp_notif_evt.wait(), timeout=10)
+        except asyncio.TimeoutError:
             raise OperationResponseTimeoutError(
                 "CP Operation {}".format(opcode)
             )
-
-        await self._bleclnt.stop_notify(cpuuid)
+         
+        rxdata = self._cp_notif_data.pop(0) # pop first element
+        logger.debug("cmd {} RXD:{}".format(opcode, rxdata))
         return operation_rxd_unpack(opcode, rxdata)
 
     async def _validate_crc(self, crc, offset):
@@ -415,7 +437,7 @@ class DfuDevice:
                 # was: self.__execute()
                 await self.cp_cmd(OP_CODE.OBJ_EXECUTE)
             except ValidationException:
-                pass
+                logger.debug("attempt failed")
             break
         else:
             raise NordicSemiException("Failed to send init packet")
@@ -503,7 +525,7 @@ class DfuDevice:
 
             end_time = time.time()
             delta_time = end_time - start_time
-            logger.info("Image sent for {} in {0}s".format(name, delta_time))
+            logger.info("Image sent for {} in {}s".format(name, delta_time))
 
 async def scan_dfu_devices(app_address=None, timeout=10):
     """ Scan (discover) devices already in bootloader """
@@ -534,10 +556,16 @@ async def scan_dfu_devices(app_address=None, timeout=10):
     return devices
 
 
-async def do_dfu(dfu_address, zipfile):
-    # TODO find device before unip
-    imgpkg = DfuImagePkg(zipfile)
-    async with DfuDevice(address=dfu_address) as dev:
+async def device_firmware_upgrade(address, package):
+    if platform == "darwin":
+        raise RuntimeError("DFU on MacOS not yet supported")
+
+    app_addr = BleAddress(address)
+    dfu_addr = app_addr.dfu_addr()
+    logger.debug("Upgrading {} ({})".format(app_addr, dfu_addr))
+
+    async with DfuDevice(address=str(dfu_addr)) as dev:
+        imgpkg = DfuImagePkg(package)
         await dev.send_image_package(imgpkg)
 
 

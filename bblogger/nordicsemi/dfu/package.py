@@ -54,9 +54,9 @@ from nordicsemi.dfu.init_packet_pb import InitPacketPB, DFUType, CommandTypes, V
 from nordicsemi.dfu.manifest import ManifestGenerator, Manifest
 from nordicsemi.dfu.model import HexType, FirmwareKeys
 from nordicsemi.dfu.crc16 import calc_crc16
-from nordicsemi.zigbee.ota_file import OTA_file
+#from nordicsemi.zigbee.ota_file import OTA_file
 
-from .signing import Signing
+#from .signing import Signing
 
 HexTypeToInitPacketFwTypemap = {
     HexType.APPLICATION:            DFUType.APPLICATION,
@@ -626,6 +626,7 @@ DFU Package: <{0}>:
         :return: Manifest Manifest: Returns a manifest back to the user. The manifest is a parse datamodel
         of the manifest found in the Nordic DFU package.
         """
+        package_path = os.path.realpath(package_path)
 
         if not os.path.isfile(package_path):
             raise PackageException("Package {0} not found.".format(package_path))

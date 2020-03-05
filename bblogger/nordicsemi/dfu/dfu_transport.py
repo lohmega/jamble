@@ -97,6 +97,11 @@ class _IntEnumFormat(IntEnum):
     def __repr__(self):
         return self.__str__()
 
+    def __format__(self, fmt): 
+        if fmt:
+            return self.value.__format__(fmt)
+        else:
+            return self.__str__()
 
 class OP_CODE(_IntEnumFormat):
     """ 
