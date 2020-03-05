@@ -8,16 +8,19 @@ from shutil import rmtree
 from tempfile import mkdtemp
 from binascii import crc32
 from uuid import UUID
+from random import randint
+
 # Nordic libraries
 from nordicsemi.dfu.package import Package
 
 from nordicsemi.dfu.dfu_transport import (
-    OP_CODE, 
-    RES_CODE, 
-    OBJ_TYPE, 
-    operation_txd_pack, 
-    operation_rxd_unpack, 
+    OP_CODE,
+    RES_CODE,
+    OBJ_TYPE,
+    operation_txd_pack,
+    operation_rxd_unpack,
     OperationResponseTimeoutError,
+    OperationResCodeError,
     ValidationException,
     NordicSemiException,
 )
@@ -101,13 +104,14 @@ class BLE_UUID:
     C_DFU_PACKET_DATA            = _dfu_uuid(0x0002)
     # fmt: on
 
-class BleAddress():
+
+class BleAddress:
     """
     NRF "unbounded buttonless" DFU increments the BLE app address with one.
     i.e. if the address when in application is `00:00:00:00:00:00`
     the address when entered bootloader (DFU) is `00:00:00:00:00:01`
     """
-    
+
     def __init__(self, x, n=0):
         if isinstance(x, BleAddress):
             self._int = x._int
@@ -130,7 +134,7 @@ class BleAddress():
     def __str__(self):
         # return ba.hex(":") # only works in python >= 3.8
         ba = int.to_bytes(self._int, length=6, byteorder="big")
-        return ':'.join('{:02x}'.format(x) for x in ba)
+        return ":".join("{:02x}".format(x) for x in ba)
 
     def __cmp__(self, other):
         if not isinstance(other, BleAddress):
@@ -144,14 +148,19 @@ class BleAddress():
 
     def __eq__(self, other):
         return self.__cmp__(other) == 0
+
     def __ne__(self, other):
         return self.__cmp__(other) != 0
+
     def __gt__(self, other):
         return self.__cmp__(other) > 0
+
     def __lt__(self, other):
         return self.__cmp__(other) < 0
+
     def __ge__(self, other):
         return self.__cmp__(other) >= 0
+
     def __le__(self, other):
         return self.__cmp__(other) <= 0
 
@@ -160,6 +169,14 @@ class BleAddress():
 
     def app_addr(self):
         return BleAddress(self._int, n=-1)
+
+
+def app_addr_to_dfu_addr(app_addr):
+
+    app_addr = BleAddress(app_addr)
+    dfu_addr = app_addr.dfu_addr()
+    return dfu_addr
+
 
 class _ATimeoutEvent(asyncio.Event):
     """ 
@@ -194,36 +211,38 @@ class _ATimeoutQueue(asyncio.Queue):
             return await asyncio.wait_for(super().get(), timeout)
 
 
-
 class DfuImage:
     """ Paths to a binary(firmware) file with init_packet """
+
     def __init__(self, unpacked_zip, firmware):
         self.init_packet = path_join(unpacked_zip, firmware.dat_file)
         self.bin_file = path_join(unpacked_zip, firmware.bin_file)
 
+
 class DfuImagePkg:
-    # TODO this class not needed!? either add this to class Manifest 
+    # TODO this class not needed!? either add this to class Manifest
     # or extend it like `ManifestWithPaths(Manifest)`
     """ Class to abstract the DFU zip Package structure and only expose
     init_packet and binary file paths. """
-
 
     def __init__(self, zip_file_path):
         """
         @param zip_file_path: Path to the zip file with the firmware to upgrade
         """
-        zip_file_path  = realpath(zip_file_path)
+        zip_file_path = realpath(zip_file_path)
         print(zip_file_path)
 
-        self.temp_dir     = mkdtemp(prefix="nrf_dfu_")
-        self.unpacked_zip = path_join(self.temp_dir, 'unpacked_zip')
-        self.manifest     = Package.unpack_package(zip_file_path, self.unpacked_zip)
+        self.temp_dir = mkdtemp(prefix="nrf_dfu_")
+        self.unpacked_zip = path_join(self.temp_dir, "unpacked_zip")
+        self.manifest = Package.unpack_package(zip_file_path, self.unpacked_zip)
 
         self.images = {}
 
         if self.manifest.softdevice_bootloader:
             k = "softdevice_bootloader"
-            self.images[k] = DfuImage(self.unpacked_zip, self.manifest.softdevice_bootloader)
+            self.images[k] = DfuImage(
+                self.unpacked_zip, self.manifest.softdevice_bootloader
+            )
 
         if self.manifest.softdevice:
             k = "softdevice"
@@ -252,8 +271,6 @@ class DfuImagePkg:
         return total_size
 
 
-
-
 class DfuDevice:
     """
     class represents a device already in DFU
@@ -276,13 +293,15 @@ class DfuDevice:
         self._cp_notif_evt = asyncio.Event()
         self._cp_notif_data = []
 
-        self.prn = 0 #TODO prn not yet supported
+        self.prn = 0  # TODO prn not yet supported
         self.RETRIES_NUMBER = 3
 
     async def connect(self):
         logger.debug("Connecting {}...".format(self.address))
         await self._bleclnt.connect()
-        await self._bleclnt.start_notify(BLE_UUID.C_DFU_CONTROL_POINT, self._on_cp_notif)
+        await self._bleclnt.start_notify(
+            BLE_UUID.C_DFU_CONTROL_POINT, self._on_cp_notif
+        )
 
     async def disconnect(self):
         logger.debug("Disconnecting {} ...".format(self.address))
@@ -341,11 +360,9 @@ class DfuDevice:
         try:
             await asyncio.wait_for(self._cp_notif_evt.wait(), timeout=10)
         except asyncio.TimeoutError:
-            raise OperationResponseTimeoutError(
-                "CP Operation {}".format(opcode)
-            )
-         
-        rxdata = self._cp_notif_data.pop(0) # pop first element
+            raise OperationResponseTimeoutError("CP Operation {}".format(opcode))
+
+        rxdata = self._cp_notif_data.pop(0)  # pop first element
         logger.debug("cmd {} RXD:{}".format(opcode, rxdata))
         return operation_rxd_unpack(opcode, rxdata)
 
@@ -394,9 +411,7 @@ class DfuDevice:
                 # There is no init packet or present init packet is too long.
                 return False
 
-            expected_crc = (
-                crc32(init_packet[: response["offset"]]) & 0xFFFFFFFF
-            )
+            expected_crc = crc32(init_packet[: response["offset"]]) & 0xFFFFFFFF
 
             if expected_crc != response["crc"]:
                 # Present init packet is invalid.
@@ -416,9 +431,7 @@ class DfuDevice:
             await self.cp_cmd(OP_CODE.OBJ_EXECUTE)
             return True
 
-        response = await self.cp_cmd(
-            OP_CODE.OBJ_SELECT, obj_type=OBJ_TYPE.COMMAND
-        )
+        response = await self.cp_cmd(OP_CODE.OBJ_SELECT, obj_type=OBJ_TYPE.COMMAND)
         if len(init_packet) > response["max_size"]:
             raise Exception("Init command is too long")
 
@@ -456,9 +469,7 @@ class DfuDevice:
                 response["offset"] -= (
                     remainder if remainder != 0 else response["max_size"]
                 )
-                response["crc"] = (
-                    crc32(firmware[: response["offset"]]) & 0xFFFFFFFF
-                )
+                response["crc"] = crc32(firmware[: response["offset"]]) & 0xFFFFFFFF
                 return
 
             if (remainder != 0) and (response["offset"] != len(firmware)):
@@ -476,9 +487,7 @@ class DfuDevice:
                 except ValidationException:
                     # Remove corrupted data.
                     response["offset"] -= remainder
-                    response["crc"] = (
-                        crc32(firmware[: response["offset"]]) & 0xFFFFFFFF
-                    )
+                    response["crc"] = crc32(firmware[: response["offset"]]) & 0xFFFFFFFF
                     return
 
             await self.cp_cmd(OP_CODE.OBJ_EXECUTE)
@@ -505,7 +514,6 @@ class DfuDevice:
                 raise NordicSemiException("Failed to send firmware")
             logger.info("progress at {}".format(len(data)))
 
-
     async def send_image_package(self, imgpkg):
         """
         @imgpkg a DfuImagePkg instance
@@ -514,18 +522,33 @@ class DfuDevice:
             start_time = time.time()
 
             logger.info("Sending init packet for {} ...".format(name))
-            with open(image.init_packet, 'rb') as f:
-                data    = f.read()
+            with open(image.init_packet, "rb") as f:
+                data = f.read()
                 await self.send_init_packet(data)
 
             logger.info("Sending firmware bin file for {}...".format(name))
-            with open(image.bin_file, 'rb') as f:
-                data    = f.read()
+            with open(image.bin_file, "rb") as f:
+                data = f.read()
                 await self.send_firmware(data)
 
             end_time = time.time()
             delta_time = end_time - start_time
             logger.info("Image sent for {} in {}s".format(name, delta_time))
+
+    async def _ping(self):
+        """ Not needed in BLE transport """
+        tx_id = randint(0, 255)
+        try:
+            rx_id = self.cp_cmd(OP_CODE.PING, ping_id=tx_id)
+        except OperationResCodeError as e:
+            logger.debug("ignoring ping response error {}".format(e))
+            # Returning an error code is seen as good enough. The bootloader is up and running
+            return True
+        logger.debug("ping tx_id:{} rx_id:{}".format(tx_id, rx_id))
+
+        expected_rx_id = (tx_id + 1) % 256
+        return bool(rx_id == expected_rx_id)
+
 
 async def scan_dfu_devices(app_address=None, timeout=10):
     """ Scan (discover) devices already in bootloader """
@@ -556,16 +579,111 @@ async def scan_dfu_devices(app_address=None, timeout=10):
     return devices
 
 
+if platform == "darwin":
+    from plistlib import load as plist_load
+
+    async def __get_addr_from_CoreBluetoothCache():
+        """ returns dict {MacOS_device_UUID : BLE_MAC_address } """
+
+        path = "/Library/Preferences/com.apple.Bluetooth.plist"
+        try:
+            with open(path, "rb") as f:
+                plist = plist_load(f)
+        except FileNotFoundError:
+            logger.warning("{} do not exist".format(path))
+            return {}
+
+        if "CoreBluetoothCache" not in plist:
+            logger.debug("No CoreBluetoothCache in {}".format(path))
+            return {}
+
+        cbcache = plist["CoreBluetoothCache"]
+
+        if cbcache is None:
+            return {}
+
+        uuid_to_addr = {}
+
+        for devuuid, devinfo in cbcache.items():
+            if "DeviceAddress" not in devinfo:
+                continue
+
+            addr = devinfo["DeviceAddress"]
+            # addr = addr.replace('-', ':')
+            uuid_to_addr[UUID(devuuid)] = BleAddress(addr)
+
+        return uuid_to_addr
+
+    async def __find_unbounded_dfu_osid(app_osid):
+        """ find MacOS BLE device UUID (called `osid` here to avoid confusing
+        with MAC address and BLE service/characteristic uuid:s which are
+        unrelated) for a device in unbounded DFU mode. i.e. the BLE MAC address
+        changed to +1.
+
+        @param app_osid the MacOS Device UUID when device is in application (not bootlaoder)
+        """
+        app_osid = UUID(app_osid)
+        # first find the app MAC addr
+        osid_to_addr = await __get_addr_from_CoreBluetoothCache()
+        if app_osid not in osid_to_addr:
+            raise RuntimeError("Could not find application MAC address in plist")
+
+        app_addr = osid_to_addr[app_osid]
+        dfu_addr = app_addr_to_dfu_addr(app_addr)
+
+        # create reverse lookup dict
+        addr_to_osid = {v: k for k, v in osid_to_addr.items()}
+        # might alreay have it cached
+        if dfu_addr in addr_to_osid:
+            return addr_to_osid[dfu_addr]
+
+        candidates = []
+        all_devices = await discover(timeout=10)
+        for dev_info in all_devices:
+            advertised = dev_info.metadata.get("uuids")  # service uuids
+            if advertised and BLE_UUID.S_NORDIC_SEMICONDUCTOR_ASA in advertised:
+                candidates.append(dev_info)
+            else:
+                logger.debug("ignoring device {}".format(dev_info))
+        # currently Bleak only support advertiesed service uuids, not characteristic uuids.
+        for dev_info in candidates:
+            # send a ping to candidate. this should make MacOS to write the MAC address to plist
+            try:
+                async with DfuDevice(address=dev_info.address) as dev:
+                    success = dev._ping()
+                    logger.debug(
+                        "DFU ping to {} - {}".format(
+                            dev_info.address, "success" if success else "failed"
+                        )
+                    )
+
+            except Exception as e:
+                logger.debug("Ignoring {}".format(e))
+
+        # might take some time before plist is updated?
+        for attempt in range(3):
+            osid_to_addr = await __get_addr_from_CoreBluetoothCache()
+            addr_to_osid = {v: k for k, v in osid_to_addr.items()}
+            if dfu_addr in addr_to_osid:
+                return addr_to_osid[dfu_addr]
+            logger.debug("Failed attempt to find MacOS unbounded DFU device UUID")
+            asyncio.sleep(1)
+
+        raise RuntimeError("Failed to find MacOS unbounded DFU device UUID")
+
+
 async def device_firmware_upgrade(address, package):
     if platform == "darwin":
-        raise RuntimeError("DFU on MacOS not yet supported")
+        logger.warning("DFU on MacOS is experimental")
+        app_addr = address
+        dfu_addr = __find_unbounded_dfu_osid(app_osid=app_addr)
+    else:
+        app_addr = BleAddress(address)
+        dfu_addr = app_addr.dfu_addr()
 
-    app_addr = BleAddress(address)
-    dfu_addr = app_addr.dfu_addr()
     logger.debug("Upgrading {} ({})".format(app_addr, dfu_addr))
 
     async with DfuDevice(address=str(dfu_addr)) as dev:
         imgpkg = DfuImagePkg(package)
         await dev.send_image_package(imgpkg)
-
 
