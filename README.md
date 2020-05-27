@@ -1,7 +1,7 @@
 # jamble
 Command line tool for interacting with the Lohmega BlueBerry logger over Bluetooth LE 
 
-Should work on Linux, MacOS and Windows but not tested Windows.
+Tested on GNU/Linux, MacOS and Windows.
 
 install
 -------
@@ -57,5 +57,3 @@ Bluetooth monitor on MacOS "PacketLogger.app":
 - Download "Additional Tools" (contains PacketLogger) from
  https://developer.apple.com/download/more/?=for%20Xcode
 
-Also see:
-https://stackoverflow.com/questions/5863088/bluetooth-sniffer-preferably-mac-osx
