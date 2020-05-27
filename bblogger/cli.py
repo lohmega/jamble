@@ -97,6 +97,9 @@ async def do_fetch(**kwargs):
         await bbc.fetch(ofile=fp, **kwargs)
 
 
+async def do_calibrate(**kwargs):
+    pass
+
 async def do_test(**kwargs):
     """ test different commands and settings. As problems
     often are in lower level BLE API:s this test might expose them"""
@@ -304,6 +307,7 @@ def parse_args():
         description="Get device information. Firmware version etc"
     )
     sp.set_defaults(_actionfunc=do_device_info)
+    sps.append(sp)
 
     # ---- FETCH -------------------------------------------------------------
     sp = subparsers.add_parser(
@@ -335,6 +339,16 @@ def parse_args():
         help="Max number of data points or log entries to fetch",
     )
     sps.append(sp)
+
+    # ---- CALIBRATE -------------------------------------------------------
+    # sp = subparsers.add_parser(
+        # "calibrate",
+        # parents=[common],
+        # description="Calibrate sensor(s)"
+    # )
+
+    # sp.set_defaults(_actionfunc=do_calibrate)
+    # sps.append(sp)
 
     # ---- DFU -------------------------------------------------------------
     sp = subparsers.add_parser(
