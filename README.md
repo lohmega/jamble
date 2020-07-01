@@ -25,10 +25,10 @@ CLI tool Usage example
 bblog scan
 
 # enable logging
-bblog config-write --logging=on --address=<address_or_MacOSid>
+bblog config-write --logging=on --address <address_or_MacOSid>
 
 # fetch 3 seconds of real time sensor data
-bblog fetch --rtd -n3 --address=<address_or_MacOSid>
+bblog fetch --rtd -n3 --address <address_or_MacOSid>
 ```
 
 debug
