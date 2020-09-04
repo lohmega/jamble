@@ -50,11 +50,14 @@ class BlueBerryClient():
         self._evt_cmd = ATimeoutEvent()
         self._evt_fetch = ATimeoutEvent()
 
-        # not in all backend (yet). will work without it but might hang forever
         try:
             self._bc.set_disconnected_callback(self._on_disconnect)
+        # not in all backend (yet). will work without it but might hang forever
         except NotImplementedError:
             logger.warning("set_disconnected_callback not supported")
+        # "fix" for bug in bleak MacOS backend version 0.7.x?
+        except AttributeError:
+            logger.warning("set_disconnected_callback not set")
 
     async def __aenter__(self):
         await self._bc.connect()

@@ -5,7 +5,7 @@ with open("README.md", "r") as fh:
 
 setuptools.setup(
     name="lohmega-bblogger", # TODO username
-    version="0.2",
+    version="0.3",
     author="Lohmega",
     author_email="info@lohmega.com",
     entry_points={"console_scripts": ["bblog=bblogger.cli:main"]},   
