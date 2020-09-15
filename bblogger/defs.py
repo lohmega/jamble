@@ -84,6 +84,8 @@ class UUIDS:
     C_CFG_SENSOR_ENABLE = _uuid_bbl(0x01)
     # log interval in seconds (uint32)
     C_CFG_INTERVAL = _uuid_bbl(0x02)
+    # rt imu mode (off = 0, 25hz = 6, 50hz = 7, 100hz = 8, 200hz = 9, 400hz = 10) (uint32)
+    C_CFG_RT_IMU = _uuid_bbl(0x03)
     #
     # Device Information (Service)
     S_DEVICE_INFORMATION = _uuid_std(0x180A)
