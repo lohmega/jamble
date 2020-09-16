@@ -1,10 +1,11 @@
-# jamble
+jamble
+======
 Command line tool for interacting with the Lohmega BlueBerry logger over Bluetooth LE 
 
 Tested on GNU/Linux, MacOS and Windows.
 
-install
--------
+Install
+=======
 ```
 python3 -m pip install git+https://git@github.com/lohmega/jamble.git
 ```
@@ -17,8 +18,8 @@ make install
 ```
 
 
-CLI tool Usage example
-----------------------
+Usage examples
+==============
 
 ```
 # scan and list BlueBerry devices
@@ -31,13 +32,20 @@ bblog config-write --logging=on --address <address_or_MacOSid>
 bblog fetch --rtd -n3 --address <address_or_MacOSid>
 ```
 
-debug
------
+Firmware update
+===============
+
+Find latest firmware versions at http://fw.lohmega.com/.
+Flash/install firmware zip with command `bblog dfu -address F2:1F:2B:52:48:9E --package bb_v10_logger_dfu_x_x_x.zip`
+To see installed firmware, run `bblog device-info --address <address_or_MacOSid>`.
+
+
+Debug
+=====
 
 Try pass the verbose level 4 argument `-vvvv` to enable lots of debug info
 
-### GNU/Linux:
-
+GNU/Linux:
 
 btmon - bluetooth monitor (replaces hcidump that is no longer maintained)
 will show more details on error than Bluez DBUS API.
@@ -49,7 +57,7 @@ Experimental settings in
 
 `hciconfig -a` - show configurations and interface info
 
-### MacOS
+MacOS:
 
 Bluetooth monitor on MacOS "PacketLogger.app":
 - Create Apple developer account.
