@@ -278,7 +278,7 @@ class BlueBerryClient():
         d["serial_number"] = await self._read_str(UUIDS.C_SERIAL_NUMBER)
         return d
 
-    async def fetch(self, ofile=None, rtd=False, fmt="txt", num=None, **kwargs):
+    async def fetch(self, ofile=None, rtd=False, rtd_rate=None,fmt="txt", num=None, **kwargs):
 
         if rtd:
             uuid_ = UUIDS.C_SENSORS_RTD
@@ -306,14 +306,12 @@ class BlueBerryClient():
             if done:
                 logger.debug("End of log. Fetched {} entries".format(bbd.nentries))
                 self._evt_fetch.set()
-
-        if rtd:
-            enabled = await self._read_u32(UUIDS.C_CFG_LOG_ENABLE)
-            if not enabled:
-                raise RuntimeError("logging must be enabled for real-time data (rtd)")
+        
+        if rtd_rate is not None:
+            await self._write_u32(UUIDS.C_CFG_RT_IMU, rtd_rate)
 
         await self._bc.start_notify(uuid_, response_handler)
-
+    
         timeout = None  # kwargs.get('timeout', 100)
         if not await self._evt_fetch.wait(timeout):
             logger.error("Notification timeout after %d sec" % timeout)
