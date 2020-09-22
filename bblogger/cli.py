@@ -9,7 +9,6 @@ import traceback
 from os.path import realpath, abspath, expanduser
 import bblogger as bbl
 
-from bleak import __version__ as bleak_version
 try:
     from bblogger.dfu import device_firmware_upgrade
 except ImportError:
@@ -406,7 +405,10 @@ def parse_args():
 
 def print_versions():
     import platform
+    from bleak import __version__ as bleak_version
+    from bblogger import __version__ as bblog_version
 
+    print("bblog:", bblog_version)
     print("bleak:", bleak_version)
     print("os:", platform.platform())
     print("python:", platform.python_version())

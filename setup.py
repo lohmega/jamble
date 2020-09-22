@@ -1,11 +1,20 @@
 import setuptools
+import os
+
+THIS_DIR = os.path.abspath(os.path.dirname(__file__))
+
+VERSION = None
+with open(os.path.join(THIS_DIR, "bblogger", "__version__.py")) as f:
+    tmp_dict = {}
+    exec(f.read(), tmp_dict)
+    VERSION = tmp_dict["__version__"]
 
 with open("README.md", "r") as fh:
     long_description = fh.read()
 
 setuptools.setup(
     name="lohmega-bblogger", # TODO username
-    version="0.4",
+    version=VERSION,
     author="Lohmega",
     author_email="info@lohmega.com",
     entry_points={"console_scripts": ["bblog=bblogger.cli:main"]},   

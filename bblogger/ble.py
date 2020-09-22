@@ -133,15 +133,6 @@ class BlueBerryClient():
         self._evt_cmd.clear()
 
         def response_handler(sender, data):
-            # sender is str. should be uuid!?
-            if str(sender).lower() != str(rxuuid).lower():
-                logger.warning(
-                    "unexpected notify response \
-                        from {} expected {}".format(
-                        sender, rxuuid
-                    )
-                )
-                return
             rxdata.extend(data)
             logger.debug("cmd RXD:{}".format(data))
             self._evt_cmd.set()
@@ -291,15 +282,6 @@ class BlueBerryClient():
         self._evt_fetch.clear()
 
         def response_handler(sender, data):
-            if str(sender).lower() != str(uuid_).lower():
-                logger.warning(
-                    "unexpected notify response \
-                        from {} expected {}".format(
-                        sender, uuid_
-                    )
-                )
-                return
-
             done = bbd.putb(data)
             if not done and nentries is not None:
                 done = bbd.nentries >= nentries
