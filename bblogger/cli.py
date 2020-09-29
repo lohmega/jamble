@@ -9,10 +9,6 @@ import traceback
 from os.path import realpath, abspath, expanduser
 import bblogger as bbl
 
-try:
-    from bblogger.dfu import device_firmware_upgrade
-except ImportError:
-    pass
 
 logger = logging.getLogger(__name__)
 
@@ -65,8 +61,22 @@ async def do_device_info(**kwargs):
         print(k, ":", v)
 
 async def do_dfu(address, package, boot, **kwargs):
+    from bblogger.dfu import device_firmware_upgrade, app_to_dfu_address
+    
     if address is None:
         raise ValueError("No address given")
+
+    no_app = kwargs.get("no_app")
+    if no_app:
+        app_addr = None
+        dfu_addr = address
+    else:
+        app_addr = address
+        dfu_addr = await app_to_dfu_address(app_addr)
+    
+        logger.info("Entering DFU from app ...")
+        async with bbl.BlueBerryClient(address=app_addr, **kwargs) as bbc:
+            d = await bbc.enter_dfu() 
 
     if boot is None and package is None:
         raise ValueError("No package given")
@@ -74,15 +84,12 @@ async def do_dfu(address, package, boot, **kwargs):
     if boot == "app":
         raise NotImplementedError("TODO boot app reset abort")
     
-    logger.info("Entering bootloader ...")
-    async with bbl.BlueBerryClient(address=address, **kwargs) as bbc:
-        d = await bbc.enter_dfu() 
-
     if boot == "bl":
         return
 
-    logger.info("Re-discover device in DFU mode ...")
-    await device_firmware_upgrade(address=address, package=package)
+    logger.debug("dfu_addr:{}, app_addr:{}".format(app_addr, dfu_addr))
+    logger.info("DFU ...")
+    await device_firmware_upgrade(dfu_addr=dfu_addr, package=package)
 
 async def do_fetch(**kwargs):
     ofile = kwargs.get("file")
@@ -232,7 +239,8 @@ def parse_args():
     sp.set_defaults(_actionfunc=do_blink)
 
     sp.add_argument(
-        "--num", "-n", metavar="N", type=type_uint, default=1, help="Number of blinks"
+        "--num", "-n", metavar="N", type=type_uint, default=1, 
+        help="Number of blinks"
     )
     sps.append(sp)
 
@@ -326,7 +334,13 @@ def parse_args():
         "--rtd_rate",
         metavar="rts_rate",
         type=type_uint,
-        help="RT Data rate 0 - 1 Hz all sensors, 6 - 25 Hz IMU only, 7 - 50 Hz IMU only, 8 - 100 Hz IMU only, 9  - 200 Hz IMU only, 10 - 400 Hz IMU only",
+        help="RT Data rate \
+            0 - 1 Hz all sensors, \
+            6 - 25 Hz IMU only, \
+            7 - 50 Hz IMU only, \
+            8 - 100 Hz IMU only, \
+            9  - 200 Hz IMU only, \
+            10 - 400 Hz IMU only",
     )
 
     sp.add_argument(
@@ -375,6 +389,13 @@ def parse_args():
         "--package", 
         type=type_fullpath,
         help="Nrf DFU zip package",
+    )
+    sp.add_argument(
+        "--no-app", 
+        action="store_true",
+        help="Device have no application and already in DFU mode. Assumes \
+        provided address is the DFU address which might be different from the \
+        application address",
     )
     sp.set_defaults(_actionfunc=do_dfu)
     sps.append(sp)

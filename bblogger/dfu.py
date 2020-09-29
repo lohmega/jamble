@@ -316,15 +316,6 @@ class DfuDevice:
 
     def _on_cp_notif(self, sender, data):
         cpuuid = BLE_UUID.C_DFU_CONTROL_POINT
-        # sender is str. should be uuid!?
-        if sender != cpuuid:
-            logger.warning(
-                "unexpected notify response \
-                    from {} expected {}".format(
-                    sender, cpuuid
-                )
-            )
-            return
         self._cp_notif_data.append(data)
         self._cp_notif_evt.set()
 
@@ -672,16 +663,18 @@ if platform == "darwin":
         raise RuntimeError("Failed to find MacOS unbounded DFU device UUID")
 
 
-async def device_firmware_upgrade(address, package):
+async def app_to_dfu_address(app_addr):
+    
     if platform == "darwin":
         logger.warning("DFU on MacOS is experimental")
-        app_addr = address
         dfu_addr = __find_unbounded_dfu_osid(app_osid=app_addr)
     else:
-        app_addr = BleAddress(address)
+        app_addr = BleAddress(app_addr)
         dfu_addr = app_addr.dfu_addr()
 
-    logger.debug("Upgrading {} ({})".format(app_addr, dfu_addr))
+    return dfu_addr
+
+async def device_firmware_upgrade(dfu_addr, package):
 
     async with DfuDevice(address=str(dfu_addr)) as dev:
         imgpkg = DfuImagePkg(package)
