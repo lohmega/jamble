@@ -98,10 +98,9 @@ class BlueBerryClient():
         passcode status can not be INIT for some operations like fetch (read log).
 
         """
-        logger.debug("Unlock/init")
 
         rc = await self._pw_status()
-        logger.debug("Password/passcode state {}".format(rc))
+        logger.debug("Unlock/init: password/passcode state {}".format(rc))
 
         if rc == PASSCODE_STATUS.INIT:
             if password:
