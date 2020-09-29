@@ -57,6 +57,9 @@ Experimental settings in
 
 `hciconfig -a` - show configurations and interface info
 
+`sudo hcitool -i hci0 lescan` - scan BLE devices
+
+
 MacOS:
 
 Bluetooth monitor on MacOS "PacketLogger.app":

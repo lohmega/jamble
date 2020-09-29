@@ -68,7 +68,6 @@ class BlueBerryClient():
 
     def _on_disconnect(self, client, _x=None):
         # _x only in bleak > 0.6
-        logger.warning("Device {} unexpected disconnect".format(self._bc.address))
         if not client is self._bc:
             logger.warning(
                 "Unexpected disconnect callback from {} (self:{})".format(
@@ -166,6 +165,8 @@ class BlueBerryClient():
         # hide misleading error on unexpected disconnect
         if await self._bc.is_connected():
             await self._bc.stop_notify(rxuuid)
+        else:
+            logger.warning("Unexpected disconnect")
 
         await asyncio.sleep(2)  # TODO remove!?
 
@@ -321,6 +322,8 @@ class BlueBerryClient():
         # hide missleading error on unexpected disconnect
         if await self._bc.is_connected():
             await self._bc.stop_notify(uuid_)
+        else:
+            logger.warning("Unexpected disconnect")
 
         logger.debug("Fetched %d entries" % bbd.nentries)
         return bbd._data
