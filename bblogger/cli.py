@@ -6,7 +6,7 @@ import asyncio
 import sys
 import argparse
 import traceback
-from os.path import realpath, abspath, expanduser
+from os.path import realpath, abspath, expanduser, dirname
 import bblogger as bbl
 
 
@@ -61,6 +61,10 @@ async def do_device_info(**kwargs):
         print(k, ":", v)
 
 async def do_dfu(address, package, boot, **kwargs):
+    # hack to include nordicsemi sources without modifications 
+    this_dir = abspath(dirname(__file__))
+    sys.path.insert(0, this_dir)
+
     from bblogger.dfu import device_firmware_upgrade, app_to_dfu_address
     
     if address is None:
