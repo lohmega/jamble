@@ -60,7 +60,7 @@ class BlueBerryClient():
             logger.warning("set_disconnected_callback not set")
 
     async def __aenter__(self):
-        await self._bc.connect()
+        await self.connect()
         return self
 
     async def __aexit__(self, exc_type, exc_val, exc_tb):
@@ -83,26 +83,47 @@ class BlueBerryClient():
         if not self._evt_fetch.is_set():
             self._evt_fetch.set()
 
-    async def connect(self, address, **kwargs):
+    async def connect(self):
         # called on enter
-        await self._bc.connect(**kwargs)
+        await self._bc.connect()
         # TODO unlock only needed for same operations do it when needed
         await self._unlock(self._password)
         return True
 
     async def _unlock(self, password):
         """
-        unlock device if it requires a password
+        unlock or "init" device. 
+        note: might set password if provided and BB device 
+        passcode state is INIT (directly after power on).
+        passcode status can not be INIT for some operations like fetch (read log).
+
         """
+        logger.debug("Unlock/init")
+
         rc = await self._pw_status()
-        if rc == PASSCODE_STATUS.UNVERIFIED:
+        logger.debug("Password/passcode state {}".format(rc))
+
+        if rc == PASSCODE_STATUS.INIT:
+            if password:
+                await self._pw_write(password)
+                logger.debug("Password protection enabled")
+            else:
+                # writing to log enable characteristic will change state to
+                # DISABLED as a side effect. also logging is disabled after
+                # power on
+                #val = await self._read_u32(UUIDS.C_CFG_LOG_ENABLE)
+                await self._write_u32(UUIDS.C_CFG_LOG_ENABLE, 0)
+                logger.debug("Password protection disabled")
+        
+        elif rc == PASSCODE_STATUS.UNVERIFIED:
             if password is None:
                 await self._bc.disconnect()
                 raise ValueError("Password needed for this device")
             await self._pw_write(password)
         else:
-            pass  # password not needed for this device
-        return rc
+            # password not needed for this device
+            pass
+
 
     async def _write_u32(self, cuuid, val):
         val = int(val)
