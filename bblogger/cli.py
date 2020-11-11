@@ -6,9 +6,12 @@ import asyncio
 import sys
 import argparse
 import traceback
+import signal
+import functools
+import atexit
+
 from os.path import realpath, abspath, expanduser, dirname
 import bblogger as bbl
-
 
 logger = logging.getLogger(__name__)
 
@@ -483,6 +486,16 @@ def set_verbose(verbose_level):
     if verbose_level >= 3:
         print_versions()
 
+def cancel_tasks():
+    # Cancel all task to ensure all connections closed.  Otherwise devices
+    # can be tied to "zombie connections" and not visible on next scan/connect.
+    for task in asyncio.Task.all_tasks():
+        if task is asyncio.tasks.Task.current_task():
+            continue
+        task.cancel()
+ 
+def signal_handler(signo):
+    cancel_tasks()
 
 def main():
     args = parse_args()
@@ -498,19 +511,13 @@ def main():
     actionfunc = args.get("_actionfunc")
     if not actionfunc:
         return
-    loop = asyncio.get_event_loop()
-    loop.run_until_complete(actionfunc(loop=loop, **args))
 
-    # try:
-    # loop = asyncio.get_event_loop()
-    # #aw = asyncio.wait_for(args._actionfunc(loop, args), args.timeout)
-    # #loop.run_until_complete(aw)
-    # loop.run_until_complete(actionfunc(loop=loop, **args))
-    # except Exception as e:
-    # print(e)
-    # if verbose_level:
-    # print(traceback.format_exc())
-    # exit(1)
+    loop = asyncio.get_event_loop()
+    # signal.SIGHUP unix only    
+    for signo in [signal.SIGINT, signal.SIGTERM]:
+        loop.add_signal_handler(signo, signal_handler, signo)
+
+    loop.run_until_complete(actionfunc(loop=loop, **args))
 
 
 if __name__ == "__main__":

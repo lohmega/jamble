@@ -47,7 +47,7 @@ Try pass the verbose level 4 argument `-vvvv` to enable lots of debug info
 
 GNU/Linux:
 
-btmon - bluetooth monitor (replaces hcidump that is no longer maintained)
+`btmon` - bluetooth monitor (replaces hcidump that is no longer maintained)
 will show more details on error than Bluez DBUS API.
 
 `journalctl | grep bluetooth`
