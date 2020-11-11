@@ -286,12 +286,6 @@ def parse_args():
             help="sensor on|off",
         )
 
-    # cfa.add_argument('--all',
-    # metavar='ONOFF',
-    # type=onoffbool,
-    # help='All sensors on|off. Can be combined with induvidual sensors \
-    # on|off for easier configuration')
-
     cfa.add_argument(
         "--logging",
         type=onoffbool,
@@ -333,21 +327,11 @@ def parse_args():
     sp.add_argument("--file", help="Data output file")
     sp.add_argument(
         "--rtd",
-        action="store_true",
-        help="Fetch real-time sensor data instead of logged. Will always show \
-            all sensors regardless of config",
-    )
-    sp.add_argument(
-        "--rtd_rate",
-        metavar="rts_rate",
-        type=type_uint,
-        help="RT Data rate \
-            0 - 1 Hz all sensors, \
-            6 - 25 Hz IMU only, \
-            7 - 50 Hz IMU only, \
-            8 - 100 Hz IMU only, \
-            9  - 200 Hz IMU only, \
-            10 - 400 Hz IMU only",
+        type=int,
+        default=0,
+        choices=[0, 1, 25, 50, 100, 200, 400], 
+        help="Fetch real-time sensor data. Value in Hz. Note that at 1 Hz, \
+            all sensors fetched and when > 1 Hz, only IMU data. 0 is disabled and default",
     )
 
     sp.add_argument(

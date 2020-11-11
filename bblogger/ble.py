@@ -290,12 +290,28 @@ class BlueBerryClient():
         d["serial_number"] = await self._read_str(UUIDS.C_SERIAL_NUMBER)
         return d
 
-    async def fetch(self, ofile=None, rtd=False, rtd_rate=None,fmt="txt", num=None, **kwargs):
-
-        if rtd:
+    async def fetch(self, ofile=None, rtd=False, fmt="txt", num=None, **kwargs):
+        RTD_RATE_HZ_TO_VAL = {
+             1:   0,
+             25:  6, 
+             50:  7, 
+            100:  8, 
+            200:  9,
+            400: 10
+        }
+        
+        uuid_ = UUIDS.C_SENSORS_LOG
+        if not rtd:
+            pass
+        elif rtd == 1:
+            # fw backward compatible. could be removed!?
             uuid_ = UUIDS.C_SENSORS_RTD
         else:
-            uuid_ = UUIDS.C_SENSORS_LOG
+            if rtd not in RTD_RATE_HZ_TO_VAL:
+                raise ValueError("Invalid rtd")
+            rtd_rate = RTD_RATE_HZ_TO_VAL[rtd]
+            await self._write_u32(UUIDS.C_CFG_RT_IMU, rtd_rate)
+
 
         bbd = BlueBerryDeserializer(ofmt=fmt, ofile=ofile)
         nentries = num
@@ -310,8 +326,6 @@ class BlueBerryClient():
                 logger.debug("End of log. Fetched {} entries".format(bbd.nentries))
                 self._evt_fetch.set()
         
-        if rtd_rate is not None:
-            await self._write_u32(UUIDS.C_CFG_RT_IMU, rtd_rate)
 
         await self._bc.start_notify(uuid_, response_handler)
     
