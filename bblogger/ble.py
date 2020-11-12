@@ -10,8 +10,9 @@ if system() == "Linux":
     from bblogger.conn_params import verify_configured
     verify_configured()
 
-from bblogger.defs import SENSORS, CMD_OPCODE, CMD_RESP, UUIDS, PASSCODE_STATUS
+from bblogger.defs import SENSORS, CMD_OPCODE, CMD_RESP, UUIDS, PASSCODE_STATUS, enum2str
 from bblogger.deserialize import BlueBerryDeserializer
+from bblogger.outputwriter import mk_OutputWriter
 
 logger = logging.getLogger(__name__)
 
@@ -112,7 +113,7 @@ class BlueBerryClient():
                 #val = await self._read_u32(UUIDS.C_CFG_LOG_ENABLE)
                 await self._write_u32(UUIDS.C_CFG_LOG_ENABLE, 0)
                 logger.debug("Password protection disabled")
-        
+
         elif rc == PASSCODE_STATUS.UNVERIFIED:
             if password is None:
                 await self._bc.disconnect()
@@ -215,7 +216,7 @@ class BlueBerryClient():
             if n > 0:
                 await asyncio.sleep(1)
 
-    async def config_read(self):
+    async def config_read(self, outfile=None, fmt=None):
 
         conf = OrderedDict()
 
@@ -226,6 +227,7 @@ class BlueBerryClient():
         conf["interval"] = val
 
         val = await self._pw_status()
+        val = "{} ({})".format(val, enum2str(PASSCODE_STATUS, val))
         conf["pwstatus"] = val
 
         enbits = await self._read_u32(UUIDS.C_CFG_SENSOR_ENABLE)
@@ -233,7 +235,12 @@ class BlueBerryClient():
         for name, s in SENSORS.items():
             conf[s.apiname] = bool(s.enmask & enbits)
 
+        out = mk_OutputWriter(outfile=outfile, fmt=fmt)
+        out.write_kv(conf)
+
         return conf
+
+
 
     async def config_write(self, **kwargs):
         setMask = 0
@@ -277,7 +284,7 @@ class BlueBerryClient():
     async def enter_dfu(self):
         await self._cmd([CMD_OPCODE.ENTER_DFU])
 
-    async def device_info(self, debug=False):
+    async def device_info(self, outfile=None, fmt="txt", debug=False, **kwargs):
         if debug:
             services = await self._bc.get_services()
             for s in services:
@@ -288,18 +295,22 @@ class BlueBerryClient():
         d["manufacturer"] = await self._read_str(UUIDS.C_MANUFACTURER)
         d["software_rev"] = await self._read_str(UUIDS.C_SOFTWARE_REV)
         d["serial_number"] = await self._read_str(UUIDS.C_SERIAL_NUMBER)
+
+        out = mk_OutputWriter(outfile=outfile, fmt=fmt)
+        out.write_kv(d)
+
         return d
 
-    async def fetch(self, ofile=None, rtd=False, fmt="txt", num=None, **kwargs):
+    async def fetch(self, outfile=None, fmt="txt", rtd=False, num=None, **kwargs):
         RTD_RATE_HZ_TO_VAL = {
              1:   0,
-             25:  6, 
-             50:  7, 
-            100:  8, 
+             25:  6,
+             50:  7,
+            100:  8,
             200:  9,
             400: 10
         }
-        
+
         uuid_ = UUIDS.C_SENSORS_LOG
         if not rtd:
             pass
@@ -313,7 +324,7 @@ class BlueBerryClient():
             await self._write_u32(UUIDS.C_CFG_RT_IMU, rtd_rate)
 
 
-        bbd = BlueBerryDeserializer(ofmt=fmt, ofile=ofile)
+        bbd = BlueBerryDeserializer(ofmt=fmt, ofile=outfile)
         nentries = num
 
         self._evt_fetch.clear()
@@ -325,10 +336,9 @@ class BlueBerryClient():
             if done:
                 logger.debug("End of log. Fetched {} entries".format(bbd.nentries))
                 self._evt_fetch.set()
-        
 
         await self._bc.start_notify(uuid_, response_handler)
-    
+
         timeout = None  # kwargs.get('timeout', 100)
         if not await self._evt_fetch.wait(timeout):
             logger.error("Notification timeout after %d sec" % timeout)
@@ -343,8 +353,15 @@ class BlueBerryClient():
         return bbd._data
 
 
-async def scan(timeout=None, outfile=None, **kwargs):
-    devices = []
+async def scan(outfile=None, fmt=None, timeout=None, **kwargs):
+    out = mk_OutputWriter(
+        outfile = outfile,
+        fmt = fmt,
+        header=["ADDR", "RSSI", "NAME"],
+        colwidths=[20, 10, 4]
+    )
+
+    devices = {}
     candidates = await discover(timeout=timeout)
     for d in candidates:
         match = False
@@ -362,9 +379,9 @@ async def scan(timeout=None, outfile=None, **kwargs):
 
         if match:
             logger.debug("details={}, metadata={}".format(d.details, d.metadata))
-            if outfile:
-                print(d.address, "  ", d.rssi, "dBm", "  ", d.name, file=outfile)
-            devices.append(d)
+            row = (d.address, str(d.rssi), d.name)
+            out.write_row(row)
+            devices[(str(d.address)] = row
 
     return devices
 

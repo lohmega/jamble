@@ -9,41 +9,26 @@ import traceback
 import signal
 import functools
 import atexit
+import json
+from pprint import pprint
 
-from os.path import realpath, abspath, expanduser, dirname
+from os.path import realpath, abspath, expanduser, dirname, exists
 import bblogger as bbl
 
 logger = logging.getLogger(__name__)
 
 
-
 async def do_scan(**kwargs):
-    await bbl.scan(outfile=sys.stdout, timeout=kwargs.get("timeout"))
-
+    await bbl.scan(**kwargs)
 
 async def do_blink(**kwargs):
     n = kwargs.get("num", 0)
     async with bbl.BlueBerryClient(**kwargs) as bbc:
         await bbc.blink(n)
 
-
 async def do_config_read(**kwargs):
-    def to_onoff(x):
-        return "on" if x else "off"
-
     async with bbl.BlueBerryClient(**kwargs) as bbc:
-        conf = await bbc.config_read()
-
-    for key, val in conf.items():
-        if key == "pwstatus":
-            v = "{} ({})".format(val, bbl.enum2str(bbl.PASSCODE_STATUS, val))
-        elif key == "interval":
-            v = str(val)
-        else:
-            v = to_onoff(val)
-
-        print("  ", key.ljust(10), ":", v)
-
+        conf = await bbc.config_read(**kwargs)
 
 async def do_config_write(**kwargs):
     async with bbl.BlueBerryClient(**kwargs) as bbc:
@@ -59,9 +44,14 @@ async def do_set_password(**kwargs):
 
 async def do_device_info(**kwargs):
     async with bbl.BlueBerryClient(**kwargs) as bbc:
-        d = await bbc.device_info() 
-    for k, v in d.items():
-        print(k, ":", v)
+        await bbc.device_info(**kwargs)
+
+async def do_fetch(**kwargs):
+    async with bbl.BlueBerryClient(**kwargs) as bbc:
+        await bbc.fetch(ofile=kwargs.get("outfile"), **kwargs)
+
+async def do_calibrate(**kwargs):
+    pass
 
 async def do_dfu(address, package, boot, **kwargs):
     # hack to include nordicsemi sources without modifications 
@@ -69,7 +59,7 @@ async def do_dfu(address, package, boot, **kwargs):
     sys.path.insert(0, this_dir)
 
     from bblogger.dfu import device_firmware_upgrade, app_to_dfu_address
-    
+
     if address is None:
         raise ValueError("No address given")
 
@@ -80,7 +70,7 @@ async def do_dfu(address, package, boot, **kwargs):
     else:
         app_addr = address
         dfu_addr = await app_to_dfu_address(app_addr)
-    
+
         logger.info("Entering DFU from app ...")
         async with bbl.BlueBerryClient(address=app_addr, **kwargs) as bbc:
             d = await bbc.enter_dfu() 
@@ -90,72 +80,13 @@ async def do_dfu(address, package, boot, **kwargs):
 
     if boot == "app":
         raise NotImplementedError("TODO boot app reset abort")
-    
+
     if boot == "bl":
         return
 
     logger.debug("dfu_addr:{}, app_addr:{}".format(app_addr, dfu_addr))
     logger.info("DFU ...")
     await device_firmware_upgrade(dfu_addr=dfu_addr, package=package)
-
-async def do_fetch(**kwargs):
-    ofile = kwargs.get("file")
-    if ofile is None:
-        fp = sys.stdout
-    else:
-        # TODO open file, check exists etc
-        fp = open(ofile, "w")
-
-    async with bbl.BlueBerryClient(**kwargs) as bbc:
-        await bbc.fetch(ofile=fp, **kwargs)
-
-
-async def do_calibrate(**kwargs):
-    pass
-
-async def do_test(**kwargs):
-    """ test different commands and settings. As problems
-    often are in lower level BLE API:s this test might expose them"""
-
-    if kwargs.get("address") is None:
-        raise ValueError("No address")
-
-    logger.info("Testing scan")
-    kwargs["timeout"] = 5
-    logger.info("args: %s" % str(kwargs))
-    await do_scan(**kwargs)
-
-    logger.info("Testing device-info")
-    await do_device_info(**kwargs)
-
-    logger.info("Testing config-read")
-    await do_config_read(**kwargs)
-
-    logger.info("Testing config-write")
-    kwargs["logging"] = True
-    kwargs["interval"] = 1
-    logger.info("args: %s" % str(kwargs))
-    await do_config_write(**kwargs)
-
-    logger.info("Testing fetch rtd txt")
-    kwargs["rtd"] = True
-    kwargs["num"] = 3
-    kwargs["fmt"] = "txt"
-    logger.info("args: %s" % str(kwargs))
-    await do_fetch(**kwargs)
-
-    logger.info("Testing fetch rtd csv")
-    kwargs["fmt"] = "csv"
-    logger.info("args: %s" % str(kwargs))
-    await do_fetch(**kwargs)
-
-    logger.info("Testing fetch stored (but must sleep some sec first)")
-    kwargs["rtd"] = False
-    kwargs["num"] = None
-    logger.info("args: %s" % str(kwargs))
-    await asyncio.sleep(3)
-    await do_fetch(**kwargs)
-
 
 def parse_args():
     def type_password(s):
@@ -195,6 +126,29 @@ def parse_args():
         type=type_uint,
         default=5,
         help="Timeout in seconds. useful for batch jobs",
+    )
+
+    def type_outfile(s):
+        if s is None:
+            return sys.stdout
+        s = realpath(s)
+        if exists(s):
+            # TODO open file, check exists etc
+            return open(s, "a") # append
+        else:
+            return open(s, "w")
+
+
+    common.add_argument("--outfile", 
+            default=sys.stdout,
+            type=type_outfile,
+            help="Output file. Default is stdout. If file exists it is appended")
+
+    common.add_argument(
+        "--fmt",
+        default="txt",
+        choices=["csv", "json", "txt"],  #'pb'
+        help="Data output format (Ignored for some operations)",
     )
 
     # --- common that do not apply for scan -------------------------------
@@ -324,7 +278,6 @@ def parse_args():
         description="Fetch sensor data"
     )
     sp.set_defaults(_actionfunc=do_fetch)
-    sp.add_argument("--file", help="Data output file")
     sp.add_argument(
         "--rtd",
         type=int,
@@ -334,12 +287,6 @@ def parse_args():
             all sensors fetched and when > 1 Hz, only IMU data. 0 is disabled and default",
     )
 
-    sp.add_argument(
-        "--fmt",
-        default="txt",
-        choices=["csv", "json", "txt"],  #'pb'
-        help="Data output format",
-    )
 
     sp.add_argument(
         "--num",
@@ -370,9 +317,9 @@ def parse_args():
     sp.add_argument(
         "--boot",
         #action="store_true",
-	default=None,
-	nargs="?",
-	choices=["bl", "app"],
+        default=None,
+        nargs="?",
+        choices=["bl", "app"],
         help="Boot in to bootloader (bl) or application (app) then exit."
     )
 
@@ -389,15 +336,6 @@ def parse_args():
         application address",
     )
     sp.set_defaults(_actionfunc=do_dfu)
-    sps.append(sp)
-
-    # ---- TEST -------------------------------------------------------------
-    sp = subparsers.add_parser(
-        "test",
-        parents=[common],
-        description="Test different actions. Takes a some time to complete",
-    )
-    sp.set_defaults(_actionfunc=do_test)
     sps.append(sp)
 
     args = parser.parse_args()
@@ -440,15 +378,15 @@ def set_verbose(verbose_level):
     loggers = [logging.getLogger("bblogger"), logger]
 
     for name in logging.root.manager.loggerDict:
-    	if "nordicsemi" in name:
+        if "nordicsemi" in name:
              #if any(s in name for s in ["nordicsemi", "dfu"]):
              x = logging.getLogger(name)
              if x not in loggers:
                  loggers.append(x)
 
-    if verbose_level <= 0:
+    if verbose_level <= 1:
         level = logging.WARNING
-    elif verbose_level == 2:
+    if verbose_level == 2:
         level = logging.INFO
     elif verbose_level >= 3:
         level = logging.DEBUG
@@ -477,9 +415,10 @@ def cancel_tasks():
         if task is asyncio.tasks.Task.current_task():
             continue
         task.cancel()
- 
+
 def signal_handler(signo):
     cancel_tasks()
+
 
 def main():
     args = parse_args()
@@ -497,7 +436,7 @@ def main():
         return
 
     loop = asyncio.get_event_loop()
-    # signal.SIGHUP unix only    
+    # signal.SIGHUP unix only
     for signo in [signal.SIGINT, signal.SIGTERM]:
         loop.add_signal_handler(signo, signal_handler, signo)
 
