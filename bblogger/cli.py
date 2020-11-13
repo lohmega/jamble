@@ -215,7 +215,14 @@ def parse_args():
     sps.append(sp)
 
     # ---- CONFIG WRITE ------------------------------------------------------
-    BOOL_CHOICES = {"on": True, "off": False}
+    BOOL_CHOICES = {
+            "y": True, 
+            "n": False, 
+            "1": True, 
+            "0": False, 
+            "on": True, 
+            "off": False
+            }
 
     def onoffbool(s):
         if s not in BOOL_CHOICES:
@@ -440,7 +447,7 @@ def main():
     for signo in [signal.SIGINT, signal.SIGTERM]:
         loop.add_signal_handler(signo, signal_handler, signo)
 
-    loop.run_until_complete(actionfunc(loop=loop, **args))
+    loop.run_until_complete(actionfunc(**args))
 
 
 if __name__ == "__main__":

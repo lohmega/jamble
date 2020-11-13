@@ -216,7 +216,7 @@ class BlueBerryClient():
             if n > 0:
                 await asyncio.sleep(1)
 
-    async def config_read(self, outfile=None, fmt=None):
+    async def config_read(self, outfile=None, fmt=None, **kwargs):
 
         conf = OrderedDict()
 
@@ -310,19 +310,17 @@ class BlueBerryClient():
             200:  9,
             400: 10
         }
-
         uuid_ = UUIDS.C_SENSORS_LOG
         if not rtd:
             pass
-        elif rtd == 1:
-            # fw backward compatible. could be removed!?
+        elif rtd in RTD_RATE_HZ_TO_VAL:
+            #if rtd == 1:
             uuid_ = UUIDS.C_SENSORS_RTD
-        else:
-            if rtd not in RTD_RATE_HZ_TO_VAL:
-                raise ValueError("Invalid rtd")
+
             rtd_rate = RTD_RATE_HZ_TO_VAL[rtd]
             await self._write_u32(UUIDS.C_CFG_RT_IMU, rtd_rate)
-
+        else:
+            raise ValueError("Invalid rtd")
 
         bbd = BlueBerryDeserializer(ofmt=fmt, ofile=outfile)
         nentries = num

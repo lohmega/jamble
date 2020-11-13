@@ -8,6 +8,8 @@ from pprint import pprint
 from time import strftime
 from tempfile import mkdtemp
 
+import utils
+
 def print_wrn(*args, **kwargs):
     print("WRN:", *args, file=sys.stderr, **kwargs)
 
@@ -25,31 +27,9 @@ def rm(glob_expr):
     for f in glob(glob_expr):
         os.remove(f)
 
-g_use_installed_bblog = True
-
 def bblog(subarg, flags=None, child=False, **kwargs):
-    """ testing as subprocess as the cli is (or should be) the more stable interface
-    """
 
-    if g_use_installed_bblog:
-        cmd = ["bblog"]
-    else:
-        # use local relative to this dir
-        this_dir = os.path.dirname(os.path.realpath(__file__))
-        bblog_dir = os.path.realpath(os.path.join(this_dir, "../bblogger"))
-        sys.path.insert(0, bblog_dir)
-        bblog_cli = os.path.join(bblog_dir, "cli.py")
-        cmd = ["python3", bblog_cli]
-
-
-    cmd.append(subarg)
-
-    if flags:
-        cmd.append(flags)
-
-    for k, v in kwargs.items():
-        cmd.append("--{}".format(k))
-        cmd.append("{}".format(str(v)))
+    cmd = utils.mk_bblog_cmd(subarg, flags, **kwargs)
     if child:
         return Popen(cmd)
     else:
@@ -59,7 +39,7 @@ def bblog(subarg, flags=None, child=False, **kwargs):
 
 
 def bblog_devices(from_file = "bb_addresses.txt"):
-    """ return dict {<BLE address or macOS id> : <other info>}. 
+    """ return dict {<BLE address or macOS id> : <other info>}.
     from file if exists
     """
     if os.path.exists(from_file):
@@ -87,11 +67,11 @@ def bblog_foreach(addresses, subarg, **kwargs):
     #mkdtemp(suffix=None, prefix=None, dir=None)¶
     opath = lambda s: "/tmp/bblog_output_{}.txt".format(s)
     rm(opath("*"))
-    
+
     for arg in ("address", "outfile"):
         if kwargs.pop(arg, None):
             print_wrn("ignoring arg:", arg)
-    
+
     outfiles = {}
     ps = {}
     for addr in addresses:
@@ -111,7 +91,7 @@ def bblog_foreach(addresses, subarg, **kwargs):
             print_inf("Waiting for ", len(ps), "processes...")
         if not ps:
             break
-    
+
     for of in outfiles:
         pass
     # eta = n_samples/rtd_hz + 2)
@@ -123,8 +103,7 @@ def bblog_foreach(addresses, subarg, **kwargs):
 
 
 def main():
-    global g_use_installed_bblog
-    g_use_installed_bblog = False
+    utils.use_repo_sources(True)
 
     devices = bblog_devices()
     if not devices:
