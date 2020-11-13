@@ -381,7 +381,7 @@ async def scan(outfile=None, fmt=None, timeout=None, **kwargs):
             logger.debug("details={}, metadata={}".format(d.details, d.metadata))
             row = (d.address, str(d.rssi), d.name)
             out.write_row(row)
-            devices[(str(d.address)] = row
+            devices[str(d.address)] = row
 
     return devices
 
