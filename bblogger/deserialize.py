@@ -6,7 +6,7 @@ from platform import system
 from sys import stderr, stdout
 
 # not needed in python >= 3.6? as default dict keeps order
-from collections import OrderedDict
+from collections import OrderedDict, deque
 
 try:
     from google.protobuf.json_format import MessageToDict
@@ -18,7 +18,7 @@ except ImportError:
         # super inefficient - yes!
         tmpjs = MessageToJson(pb)
         return json.loads(tmpjs)
-
+from google.protobuf.message import DecodeError
 
 from bblogger import bb_log_entry_pb2
 from bblogger.defs import BlueBerryLogEntryFields
@@ -26,6 +26,18 @@ from bblogger.defs import BlueBerryLogEntryFields
 logger = logging.getLogger(__name__)
 
 TXT_COL_WIDTH = 10
+
+
+_COLNAME_TO_FLD = {}
+_PBNAME_TO_FLD = {}
+
+for x in BlueBerryLogEntryFields:
+    fld = x.value
+    _PBNAME_TO_FLD[fld.pbname] = fld
+
+    for colname in fld.colnames:
+        _COLNAME_TO_FLD[colname] = fld
+
 
 
 class BlueBerryDeserializer:
@@ -37,23 +49,14 @@ class BlueBerryDeserializer:
     each format that inherit common code. TODO
     """
 
-    def __init__(self, ofile=stdout, ofmt="txt", raw=False):
+    def __init__(self, ofile=stdout, ofmt="txt", raw=False, msg_hist_len=32):
         self._pb = bb_log_entry_pb2.bb_log_entry()  # protobuf message
-        self._bytes = bytearray()
-        self._entries = []
+        self._bbuf = bytearray()
         self._ofile = ofile
         self._raw = raw
-        self._prevKeySet = None
-        self._msgCount = 0
-        self._data = []
-
-        self._fldByColName = {}
-        self._fldByPbName = {}
-        for x in BlueBerryLogEntryFields:
-            fld = x.value
-            self._fldByPbName[fld.pbname] = fld
-            for colname in fld.colnames:
-                self._fldByColName[colname] = fld
+        self._prev_keyset = None
+        self._msg_hist = deque(maxlen=msg_hist_len)
+        self._msg_count = 0
 
         self._fmt = ofmt
 
@@ -71,7 +74,7 @@ class BlueBerryDeserializer:
 
     @property
     def nentries(self):
-        return self._msgCount
+        return self._msg_count
 
     def _MessageToOrderedDict(self, pb, columnize=False):
         """ 
@@ -83,7 +86,7 @@ class BlueBerryDeserializer:
         """
         od = OrderedDict()
         for descr in pb.DESCRIPTOR.fields:
-            fld = self._fldByPbName[descr.name]
+            fld = _PBNAME_TO_FLD[descr.name]
             val = getattr(pb, descr.name)
             if descr.label == descr.LABEL_REPEATED:
                 # HasField() do not work on repeated, use len instead. hack
@@ -104,6 +107,21 @@ class BlueBerryDeserializer:
                 od[name] = val
         return od
 
+    def _dump_msg_hist(self, max_len=4):
+        print("==== MSG HISTORY DUMP (count, size, bytes, err) ====", file=stderr)
+
+        for entry in self._msg_hist:
+            msg_count, msg_size, msg_bytes, err_str = entry
+            print("{:04d}".format(msg_count),
+                  "{:04d}".format(msg_size),
+                    msg_bytes.hex(),
+                    "'{}'".format(err_str),
+                    sep=",",
+                    file=stderr)
+
+        print("==== END: MSG HISTORY ====", file=stderr)
+
+
     def _append_txt(self, keys, vals, add_header):
         """
         pretty columnized text for terminal output.
@@ -119,7 +137,7 @@ class BlueBerryDeserializer:
                 name = k.ljust(TXT_COL_WIDTH)
                 names.append(name)
 
-                fld = self._fldByColName[k]
+                fld = _COLNAME_TO_FLD[k]
                 unit = "({})".format(fld.unit).ljust(TXT_COL_WIDTH)
                 units.append(unit)
 
@@ -128,7 +146,7 @@ class BlueBerryDeserializer:
 
         svals = [None] * len(keys)
         for i, k in enumerate(keys):
-            fld = self._fldByColName[k]
+            fld = _COLNAME_TO_FLD[k]
             s = fld.txtfmt.format(vals[i])
             svals[i] = s.ljust(TXT_COL_WIDTH)
 
@@ -145,27 +163,35 @@ class BlueBerryDeserializer:
             json.dump(keys, fp=self._ofile)
         json.dump(vals, fp=self._ofile)
 
-    def _append(self, odmsg):
-        keys = odmsg.keys()
+    def _did_keys_change(self, keys):
+        """ 
+        compare keys/field names from previous message and check if changed.
+        side effect: new keys stored
+        """
 
-        keySet = set(keys)
-        if self._prevKeySet != keySet:
-            if self._prevKeySet is not None:
+        keyset = set(keys)
+        if self._prev_keyset != keyset:
+            if self._prev_keyset is not None:
                 add_header = 1
             else:
                 add_header = 2
-            self._prevKeySet = keySet
+            self._prev_keyset = keyset
         else:
             add_header = 0
+
+        return add_header
+
+    def _append(self, odmsg):
+        keys = odmsg.keys()
+
+        add_header = self._did_keys_change(keys)
 
         if self._raw:
             vals = odmsg.values()
         else:
-            vals = [self._fldByColName[k].tounit(v) for k, v in odmsg.items()]
+            vals = [_COLNAME_TO_FLD[k].tounit(v) for k, v in odmsg.items()]
 
         assert len(keys) == len(vals)
-
-        self._data.append(vals)
 
         if self._append_fmt:
             self._append_fmt(keys, vals, add_header)
@@ -182,26 +208,43 @@ class BlueBerryDeserializer:
 
     def putb(self, chunk):
         """ put chunk of bytes to be deserialize into protobuf messages"""
-        self._bytes.extend(chunk)
+        self._bbuf.extend(chunk)
 
         while True:
-            if not self._bytes:
+            if not self._bbuf:
                 return False
 
-            msgSize = self._bytes[0]
-            if len(self._bytes) - 1 < msgSize:  # exclued "header"
+            msg_size = self._bbuf[0]
+            if len(self._bbuf) - 1 < msg_size:  # exclued "header"
                 return False
 
             self._pb.Clear()
-            msg = self._pb.FromString(self._bytes[1 : msgSize + 1])
-            odmsg = self._MessageToOrderedDict(msg, columnize=True)
-            if self._is_last_msg(odmsg):
-                return True
+            msg_bytes = self._bbuf[1 : msg_size + 1]
+            err = None
+            try:
+                pb_msg = self._pb.FromString(msg_bytes)
+            except DecodeError as e:
+                logger.error("Failed to parse msg nr {}. '{}'".format(self._msg_count, e))
+                pb_msg = None
+                err = e
 
-            self._append(odmsg)
+            if 1:
+                err_str = str(err) if err else ""
+                entry = (self._msg_count, msg_size, msg_bytes, err_str)
+                self._msg_hist.append(entry)
 
-            self._bytes = self._bytes[msgSize + 1 :]  # pop
-            self._msgCount += 1
+            if pb_msg:
+                odmsg = self._MessageToOrderedDict(pb_msg, columnize=True)
+                if self._is_last_msg(odmsg):
+                    return True
+                self._append(odmsg)
+
+            if err:
+                self._dump_msg_hist()
+                raise err
+
+            self._bbuf = self._bbuf[msg_size + 1 :]  # pop
+            self._msg_count += 1
 
 
 

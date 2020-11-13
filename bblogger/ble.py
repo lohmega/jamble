@@ -348,7 +348,6 @@ class BlueBerryClient():
             logger.warning("Unexpected disconnect")
 
         logger.debug("Fetched %d entries" % bbd.nentries)
-        return bbd._data
 
 
 async def scan(outfile=None, fmt=None, timeout=None, **kwargs):
