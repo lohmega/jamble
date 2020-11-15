@@ -51,6 +51,8 @@ class BlueBerryClient():
         self._evt_cmd = ATimeoutEvent()
         self._evt_fetch = ATimeoutEvent()
 
+        self._err_fetch = None
+
         try:
             self._bc.set_disconnected_callback(self._on_disconnect)
         # not in all backend (yet). will work without it but might hang forever
@@ -326,13 +328,18 @@ class BlueBerryClient():
         nentries = num
 
         self._evt_fetch.clear()
-
+        self._err_fetch = None
         def response_handler(sender, data):
-            done = bbd.putb(data)
+            status = bbd.putb(data)
+            if isinstance(status, Exception):
+                self._err_fetch = status
+                logger.debug("err %s" % str(self._err_fetch))
+                done = True
+            else:
+                done = status
             if not done and nentries is not None:
                 done = bbd.nentries >= nentries
             if done:
-                logger.debug("End of log. Fetched {} entries".format(bbd.nentries))
                 self._evt_fetch.set()
 
         await self._bc.start_notify(uuid_, response_handler)
@@ -348,6 +355,10 @@ class BlueBerryClient():
             logger.warning("Unexpected disconnect")
 
         logger.debug("Fetched %d entries" % bbd.nentries)
+
+        if self._err_fetch:
+            raise self._err_fetch
+
 
 
 async def scan(outfile=None, fmt=None, timeout=None, **kwargs):

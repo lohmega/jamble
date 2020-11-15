@@ -39,24 +39,119 @@ for x in BlueBerryLogEntryFields:
         _COLNAME_TO_FLD[colname] = fld
 
 
+class _PacketBuffer:
+    """
+    FIFO buffer preserving BLE packets to handle packets out of order (bug in dbus/bluez!?)
+    'pkt' - bluteooth package (chunk of bytes)
+    """
+
+    def __init__(self):
+        self._q = deque(maxlen=128)
+
+    def write(self, data):
+        if len(self._q) >= self._q.maxlen:
+            raise RuntimeError("buf to small")
+
+        self._q.append(data)
+
+
+    def peek(self, size, pkt_order=None):
+        """ returns a bytearray of len size or less """
+
+        res = bytearray()
+        if not size:
+            return res
+
+        if pkt_order is None:
+            pkt_order = range(0, len(self._q))
+
+        for i in pkt_order:
+            remains = size - len(res)
+            if remains <= 0:
+                break
+
+            try:
+                pkt = self._q[i]
+            except IndexError:
+                break
+
+            # remains could be out of range (no error raised)
+            chunk = pkt[0 : remains]
+            res.extend(chunk)
+
+        return res
+
+
+    def getc(self):
+        """ read a single char/byte """
+
+        try:
+            c = self._q[0][0]
+        except IndexError:
+            raise EOFError()
+
+        self._q[0] = self._q[0][1:] # pop left
+
+        return int(c)
+
+
+    def seek_fwd(self, size, pkt_order=None):
+        """ Move "read cursor" forward N bytes """ 
+        if not size:
+            return
+
+        if pkt_order is None:
+            pkt_order = range(0, len(self._q))
+
+        remains = size
+        to_del = []
+        for i in pkt_order:
+
+            try:
+                pkt = self._q[i]
+            except IndexError:
+                break
+
+            if remains < len(pkt):
+                self._q[i] = pkt[remains:]
+                remains = 0
+                break
+
+            to_del.append(i)
+            remains -= len(pkt)
+
+            if remains <= 0:
+                break
+
+        if remains > 0:
+            raise EOFError()
+
+        # reverse sort to preserve index while deleting
+        for i in sorted(to_del, reverse=True):
+            del self._q[i]
+
 
 class BlueBerryDeserializer:
     """
     reads a stream of protobuf data with the format 
     <len><protobuf message of size len><len>,...
-
-    yes- should probably be changed to one class for
-    each format that inherit common code. TODO
+   
+    abbrevations and definitions used:
+    'msg' - bytes or pb object for a complete message
+    'pkg' - bluteooth package (chunk of bytes)
     """
 
     def __init__(self, ofile=stdout, ofmt="txt", raw=False, msg_hist_len=32):
         self._pb = bb_log_entry_pb2.bb_log_entry()  # protobuf message
-        self._bbuf = bytearray()
         self._ofile = ofile
         self._raw = raw
         self._prev_keyset = None
         self._msg_hist = deque(maxlen=msg_hist_len)
         self._msg_count = 0
+
+        self._pkt_buf = _PacketBuffer()
+        self._msg_size = None
+        self._fail_count = 0
 
         self._fmt = ofmt
 
@@ -118,6 +213,16 @@ class BlueBerryDeserializer:
                     "'{}'".format(err_str),
                     sep=",",
                     file=stderr)
+
+        failed_msg_bytes = ','.join([ba.hex() for ba in self._pkt_buf._q]),
+        print(
+              "{:04d}".format(self._msg_count),
+              "{:04d}".format(self._msg_size), 
+              "({})".format(failed_msg_bytes),
+              "'Failed pakets'",
+              sep=",",
+              file=stderr)
+
 
         print("==== END: MSG HISTORY ====", file=stderr)
 
@@ -196,7 +301,7 @@ class BlueBerryDeserializer:
         if self._append_fmt:
             self._append_fmt(keys, vals, add_header)
 
-    def _is_last_msg(self, odm):
+    def _is_end_of_log_msg(self, odm):
         """ end of log "EOF" is a empty messagge with only the required
         timestamp field """
         if len(odm) == 1:
@@ -206,45 +311,66 @@ class BlueBerryDeserializer:
         else:
             return False
 
+    def parse_msg_bytes(self, msg_bytes):
+        self._pb.Clear()
+        pb_msg = self._pb.FromString(msg_bytes)
+        odmsg = self._MessageToOrderedDict(pb_msg, columnize=True)
+        done = self._is_end_of_log_msg(odmsg)
+        if done:
+           logger.debug("End of log msg received")
+        else:
+            self._append(odmsg)
+
+        return done
+
+    def parse_pkt_buf(self, pkt_order=None):
+        if self._msg_size is None:
+            self._msg_size = self._pkt_buf.getc() # raises EOFError if no data
+
+            if self._msg_size == 0:
+                raise RuntimeError("msg_size is zero. Where to start?")
+
+        msg_bytes = self._pkt_buf.peek(self._msg_size, pkt_order)
+        if len(msg_bytes) < self._msg_size:
+            raise EOFError("Need more data")
+
+        done = self.parse_msg_bytes(msg_bytes)
+
+        entry = (self._msg_count, self._msg_size, msg_bytes, "")
+        self._msg_hist.append(entry)
+        self._msg_count += 1
+
+        # reset
+        self._pkt_buf.seek_fwd(self._msg_size, pkt_order)
+        self._msg_size = None
+
+        return done # might have more msg in pkt_buf
+
     def putb(self, chunk):
-        """ put chunk of bytes to be deserialize into protobuf messages"""
-        self._bbuf.extend(chunk)
 
-        while True:
-            if not self._bbuf:
-                return False
-
-            msg_size = self._bbuf[0]
-            if len(self._bbuf) - 1 < msg_size:  # exclued "header"
-                return False
-
-            self._pb.Clear()
-            msg_bytes = self._bbuf[1 : msg_size + 1]
-            err = None
+        self._pkt_buf.write(chunk)
+        if self._fail_count:
             try:
-                pb_msg = self._pb.FromString(msg_bytes)
-            except DecodeError as e:
+                pkt_order=[0, 2, 1, 3, 4] # 0 is oldest
+                self.parse_pkt_buf(pkt_order=pkt_order)
+                self._fail_count = 0
+                logger.debug("Successfully recovered")
+            except (DecodeError, EOFError) as e:
                 logger.error("Failed to parse msg nr {}. '{}'".format(self._msg_count, e))
-                pb_msg = None
-                err = e
-
-            if 1:
-                err_str = str(err) if err else ""
-                entry = (self._msg_count, msg_size, msg_bytes, err_str)
-                self._msg_hist.append(entry)
-
-            if pb_msg:
-                odmsg = self._MessageToOrderedDict(pb_msg, columnize=True)
-                if self._is_last_msg(odmsg):
-                    return True
-                self._append(odmsg)
-
-            if err:
                 self._dump_msg_hist()
-                raise err
+                return e # asyncio hack. cant easily raise it here
 
-            self._bbuf = self._bbuf[msg_size + 1 :]  # pop
-            self._msg_count += 1
+        done = False
+        while not done:
+            try:
+                done = self.parse_pkt_buf()
+            except EOFError:
+                return False  # Need more data
 
+            except DecodeError as e:
+                logger.warning("Failed to parse msg nr {}. '{}'. Trying to recover...".format(self._msg_count, e))
+                self._fail_count += 1
+                return False  # try recover on next call
 
+        return done
 
