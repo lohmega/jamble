@@ -324,7 +324,7 @@ class BlueBerryClient():
         else:
             raise ValueError("Invalid rtd")
 
-        bbd = BlueBerryDeserializer(ofmt=fmt, ofile=outfile)
+        bbd = BlueBerryDeserializer(outfile=outfile, fmt=fmt)
         nentries = num
 
         self._evt_fetch.clear()

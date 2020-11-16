@@ -412,9 +412,6 @@ def set_verbose(verbose_level):
         l.setLevel(level)
         l.addHandler(handler)
 
-    if verbose_level >= 3:
-        print_versions()
-
 def cancel_tasks():
     # Cancel all task to ensure all connections closed.  Otherwise devices
     # can be tied to "zombie connections" and not visible on next scan/connect.

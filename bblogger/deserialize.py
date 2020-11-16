@@ -22,6 +22,7 @@ from google.protobuf.message import DecodeError
 
 from bblogger import bb_log_entry_pb2
 from bblogger.defs import BlueBerryLogEntryFields
+from bblogger.outputwriter import mk_OutputWriter
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +30,8 @@ TXT_COL_WIDTH = 10
 
 
 _COLNAME_TO_FLD = {}
+_COLNAME_TO_UNITS = {}
+_COLNAME_TO_TXTFMT = {}
 _PBNAME_TO_FLD = {}
 
 for x in BlueBerryLogEntryFields:
@@ -37,6 +40,8 @@ for x in BlueBerryLogEntryFields:
 
     for colname in fld.colnames:
         _COLNAME_TO_FLD[colname] = fld
+        _COLNAME_TO_UNITS[colname] = fld.unit
+        _COLNAME_TO_TXTFMT[colname]= fld.txtfmt
 
 
 class _PacketBuffer:
@@ -141,11 +146,9 @@ class BlueBerryDeserializer:
     'pkg' - bluteooth package (chunk of bytes)
     """
 
-    def __init__(self, ofile=stdout, ofmt="txt", raw=False, msg_hist_len=32):
+    def __init__(self, outfile=stdout, fmt="txt", raw=False, msg_hist_len=32):
         self._pb = bb_log_entry_pb2.bb_log_entry()  # protobuf message
-        self._ofile = ofile
         self._raw = raw
-        self._prev_keyset = None
         self._msg_hist = deque(maxlen=msg_hist_len)
         self._msg_count = 0
 
@@ -153,19 +156,12 @@ class BlueBerryDeserializer:
         self._msg_size = None
         self._fail_count = 0
 
-        self._fmt = ofmt
-
-        if ofmt is None:
-            self._append_fmt = None
-        if ofmt == "txt":
-            self._append_fmt = self._append_txt
-        elif ofmt == "csv":
-            self._csvw = csv.writer(ofile)
-            self._append_fmt = self._append_csv
-        elif ofmt == "json":
-            self._append_fmt = self._append_json
-        else:
-            raise ValueError("Unknown fmt format")
+        self._out = mk_OutputWriter(
+                outfile=outfile, 
+                fmt=fmt, 
+                colwidth=10, 
+                units=_COLNAME_TO_UNITS,
+                formats=_COLNAME_TO_TXTFMT)
 
     @property
     def nentries(self):
@@ -223,83 +219,7 @@ class BlueBerryDeserializer:
               sep=",",
               file=stderr)
 
-
         print("==== END: MSG HISTORY ====", file=stderr)
-
-
-    def _append_txt(self, keys, vals, add_header):
-        """
-        pretty columnized text for terminal output.
-        will not look pretty if raw values are used
-        """
-        if add_header:
-            if add_header > 1:
-                print("", file=self._ofile)  # extra delimiter
-
-            units = []
-            names = []
-            for k in keys:
-                name = k.ljust(TXT_COL_WIDTH)
-                names.append(name)
-
-                fld = _COLNAME_TO_FLD[k]
-                unit = "({})".format(fld.unit).ljust(TXT_COL_WIDTH)
-                units.append(unit)
-
-            print(*names, sep="", file=self._ofile)
-            print(*units, sep="", file=self._ofile)
-
-        svals = [None] * len(keys)
-        for i, k in enumerate(keys):
-            fld = _COLNAME_TO_FLD[k]
-            s = fld.txtfmt.format(vals[i])
-            svals[i] = s.ljust(TXT_COL_WIDTH)
-
-        print(*svals, sep="", file=self._ofile)
-
-    def _append_csv(self, keys, vals, add_header):
-        if add_header:
-            self._csvw.writerow(keys)
-        self._csvw.writerow(vals)
-
-    def _append_json(self, keys, vals, add_header):
-        # TODO json start and end "{}" is missing
-        if add_header:
-            json.dump(keys, fp=self._ofile)
-        json.dump(vals, fp=self._ofile)
-
-    def _did_keys_change(self, keys):
-        """ 
-        compare keys/field names from previous message and check if changed.
-        side effect: new keys stored
-        """
-
-        keyset = set(keys)
-        if self._prev_keyset != keyset:
-            if self._prev_keyset is not None:
-                add_header = 1
-            else:
-                add_header = 2
-            self._prev_keyset = keyset
-        else:
-            add_header = 0
-
-        return add_header
-
-    def _append(self, odmsg):
-        keys = odmsg.keys()
-
-        add_header = self._did_keys_change(keys)
-
-        if self._raw:
-            vals = odmsg.values()
-        else:
-            vals = [_COLNAME_TO_FLD[k].tounit(v) for k, v in odmsg.items()]
-
-        assert len(keys) == len(vals)
-
-        if self._append_fmt:
-            self._append_fmt(keys, vals, add_header)
 
     def _is_end_of_log_msg(self, odm):
         """ end of log "EOF" is a empty messagge with only the required
@@ -319,12 +239,20 @@ class BlueBerryDeserializer:
         done = self._is_end_of_log_msg(odmsg)
         if done:
            logger.debug("End of log msg received")
+           return done
+        # convert to tuple as odict_keys object rejected by json module etc
+        keys = tuple(odmsg.keys())
+        if self._raw:
+            vals = tuple(odmsg.values())
         else:
-            self._append(odmsg)
+            vals = [_COLNAME_TO_FLD[k].tounit(v) for k, v in odmsg.items()]
+
+        assert len(keys) == len(vals)
+        self._out.write_sensordata(keys, vals)
 
         return done
 
-    def parse_pkt_buf(self, pkt_order=None):
+    def _parse_pkt_buf(self, pkt_order=None):
         if self._msg_size is None:
             self._msg_size = self._pkt_buf.getc() # raises EOFError if no data
 
@@ -352,28 +280,41 @@ class BlueBerryDeserializer:
             chunk = bytearray(chunk)
 
         self._pkt_buf.write(chunk)
-        if self._fail_count:
-            try:
-                pkt_order=[0, 2, 1, 3, 4] # 0 is oldest
-                self.parse_pkt_buf(pkt_order=pkt_order)
-                self._fail_count = 0
-                logger.debug("Successfully recovered")
-            except (DecodeError, EOFError) as e:
-                logger.error("Failed to parse msg nr {}. '{}'".format(self._msg_count, e))
-                self._dump_msg_hist()
-                raise e
+        # pkt order. 0 is the oldest 
+        pkt_orders = (
+                None,
+                [0, 2, 1, 3, 4],
+                [0, 3, 1, 4, 5],
+        )
+        pkt_order = None
 
-        done = False
-        while not done:
+        while True:
+
             try:
-                done = self.parse_pkt_buf()
-            except EOFError:
+                done = self._parse_pkt_buf(pkt_order)
+                if self._fail_count:
+                    self._fail_count = 0
+                    logger.debug("Successfully recovered")
+
+                if done:
+                    return True
+
+            except EOFError as e:
                 return False  # Need more data
 
             except DecodeError as e:
-                logger.warning("Failed to parse msg nr {}. '{}'. Trying to recover...".format(self._msg_count, e))
+
                 self._fail_count += 1
+                if self._fail_count < len(pkt_orders):
+                    logger.warning("Failed to parse msg N=%d. '%s'. Trying to recover...",
+                            self._msg_count, str(e))
+                    pkt_order = pkt_orders[self._fail_count]
+                    continue
+
+                logger.error("Failed to parse msg N=%d. '%s'", self._msg_count, str(e))
+                self._dump_msg_hist()
+                raise e
                 return False  # try recover on next call
 
-        return done
+
 

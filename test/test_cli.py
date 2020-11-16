@@ -6,8 +6,12 @@ import os
 import sys
 from pprint import pprint
 
+import csv
+import json
+
 from time import strftime
 from tempfile import mkdtemp
+
 import utils
 
 def print_fail(*args, **kwargs):
@@ -25,9 +29,21 @@ def bblog(subarg, flags=None, **kwargs):
         print_fail(subarg, "rc =", r.returncode)
         utils.dump_run_res(r)
         return 1
-    else:
-        print_ok(r.args)
-        return 0
+    fmt = kwargs.get("fmt")
+   
+    try:
+        if fmt == "json":
+            for line in r.stdout.split("\n"):
+                json.loads(line)
+        elif fmt == "csv":
+            csv.reader(r.stdout)
+    except Exception as e:
+        print_fail(e)
+        utils.dump_run_res(r)
+        return 1
+
+    print_ok(r.args)
+    return 0
 
 
 def test_cli(address):
@@ -59,7 +75,7 @@ def test_cli(address):
 
 
 def main():
-    utils.use_repo_sources(True)
+    #utils.use_repo_sources(True)
     addr = sys.argv[1]
     test_cli(addr)
 
