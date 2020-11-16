@@ -12,6 +12,11 @@ class OutputWriterBase:
     def close(self):
         pass
 
+    def write_row(self, vals):
+        pass
+
+    def write_kv(self, d):
+        pass
 
 class OutputWriterTxt(OutputWriterBase):
     def __init__(self, outfile, header=None, colwidths=[], **kwargs):
@@ -25,7 +30,7 @@ class OutputWriterTxt(OutputWriterBase):
         else:
             n = 1
 
-        return s.ljust(n) 
+        return s.ljust(n)
 
     def write_row(self, vals):
         a = [self._column_pad(i, v) for i, v in enumerate(vals)]

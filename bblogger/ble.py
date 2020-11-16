@@ -330,15 +330,19 @@ class BlueBerryClient():
         self._evt_fetch.clear()
         self._err_fetch = None
         def response_handler(sender, data):
-            status = bbd.putb(data)
-            if isinstance(status, Exception):
-                self._err_fetch = status
-                logger.debug("err %s" % str(self._err_fetch))
+            # store exception and raise it later.
+            # can not raise it from this conext as asyncio will only
+            # print to stderr and continue execution.
+            # there is probably a bettwr way of doning this.
+            try:
+                done = bbd.putb(data)
+            except Exception as e:
+                self._err_fetch = e
                 done = True
-            else:
-                done = status
-            if not done and nentries is not None:
-                done = bbd.nentries >= nentries
+
+            if nentries and nentries >= bbd.nentries:
+                done = True
+
             if done:
                 self._evt_fetch.set()
 
@@ -357,6 +361,7 @@ class BlueBerryClient():
         logger.debug("Fetched %d entries" % bbd.nentries)
 
         if self._err_fetch:
+            logger.debug("err %s" % str(self._err_fetch))
             raise self._err_fetch
 
 

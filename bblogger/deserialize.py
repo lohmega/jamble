@@ -313,7 +313,8 @@ class BlueBerryDeserializer:
 
     def parse_msg_bytes(self, msg_bytes):
         self._pb.Clear()
-        pb_msg = self._pb.FromString(msg_bytes)
+        # ignore E1101: Instance of 'bb_log_entry' has no 'FromString' member (no-member)
+        pb_msg = self._pb.FromString(msg_bytes) # pylint: disable=E1101
         odmsg = self._MessageToOrderedDict(pb_msg, columnize=True)
         done = self._is_end_of_log_msg(odmsg)
         if done:
@@ -347,6 +348,8 @@ class BlueBerryDeserializer:
         return done # might have more msg in pkt_buf
 
     def putb(self, chunk):
+        if not isinstance(chunk, bytearray):
+            chunk = bytearray(chunk)
 
         self._pkt_buf.write(chunk)
         if self._fail_count:
@@ -358,7 +361,7 @@ class BlueBerryDeserializer:
             except (DecodeError, EOFError) as e:
                 logger.error("Failed to parse msg nr {}. '{}'".format(self._msg_count, e))
                 self._dump_msg_hist()
-                return e # asyncio hack. cant easily raise it here
+                raise e
 
         done = False
         while not done:
