@@ -135,6 +135,10 @@ class _PacketBuffer:
         for i in sorted(to_del, reverse=True):
             del self._q[i]
 
+    def drop_pkt(self, n=0):
+        r = self._q[n]
+        del self._q[n]
+        return r
 
 class BlueBerryDeserializer:
     """
@@ -155,6 +159,7 @@ class BlueBerryDeserializer:
         self._pkt_buf = _PacketBuffer()
         self._msg_size = None
         self._fail_count = 0
+        self._debug_dump = False
 
         self._out = mk_OutputWriter(
                 outfile=outfile, 
@@ -198,26 +203,26 @@ class BlueBerryDeserializer:
                 od[name] = val
         return od
 
+    def _print_msg_bytes(self, msg_count, msg_size, msg_bytes, err_str=""):
+        if isinstance(msg_bytes, (bytes, bytearray)):
+            msg_bytes = msg_bytes.hex()
+
+        msg_count = "{:04x}".format(msg_count)
+        msg_size = "{:02x}".format(msg_size)
+        err_str = "'{}'".format(err_str)
+        print(msg_count, msg_size, msg_bytes, err_str, sep=",", file=stderr)
+
     def _dump_msg_hist(self, max_len=4):
         print("==== MSG HISTORY DUMP (count, size, bytes, err) ====", file=stderr)
 
         for entry in self._msg_hist:
             msg_count, msg_size, msg_bytes, err_str = entry
-            print("{:04d}".format(msg_count),
-                  "{:04d}".format(msg_size),
-                    msg_bytes.hex(),
-                    "'{}'".format(err_str),
-                    sep=",",
-                    file=stderr)
+            self._print_msg_bytes(msg_count, msg_size, msg_bytes, err_str)
 
-        failed_msg_bytes = ','.join([ba.hex() for ba in self._pkt_buf._q]),
-        print(
-              "{:04d}".format(self._msg_count),
-              "{:04d}".format(self._msg_size), 
-              "({})".format(failed_msg_bytes),
-              "'Failed pakets'",
-              sep=",",
-              file=stderr)
+        msg_bytes = ','.join([ba.hex() for ba in self._pkt_buf._q])
+        msg_bytes = "({})".format(msg_bytes)
+        err_str = "Failed pakets"
+        self._print_msg_bytes(self._msg_count, self._msg_size, msg_bytes, err_str)
 
         print("==== END: MSG HISTORY ====", file=stderr)
 
@@ -232,6 +237,7 @@ class BlueBerryDeserializer:
             return False
 
     def parse_msg_bytes(self, msg_bytes):
+
         self._pb.Clear()
         # ignore E1101: Instance of 'bb_log_entry' has no 'FromString' member (no-member)
         pb_msg = self._pb.FromString(msg_bytes) # pylint: disable=E1101
@@ -263,7 +269,11 @@ class BlueBerryDeserializer:
         if len(msg_bytes) < self._msg_size:
             raise EOFError("Need more data")
 
-        done = self.parse_msg_bytes(msg_bytes)
+        if self._debug_dump:
+            self._print_msg_bytes(self._msg_count, self._msg_size, msg_bytes)
+            done = False
+        else:
+            done = self.parse_msg_bytes(msg_bytes)
 
         entry = (self._msg_count, self._msg_size, msg_bytes, "")
         self._msg_hist.append(entry)
@@ -284,7 +294,7 @@ class BlueBerryDeserializer:
         pkt_orders = (
                 None,
                 [0, 2, 1, 3, 4],
-                [0, 3, 1, 4, 5],
+                [1, 2, 3, 4, 5],
         )
         pkt_order = None
 
@@ -305,6 +315,15 @@ class BlueBerryDeserializer:
             except DecodeError as e:
 
                 self._fail_count += 1
+
+                # if self._fail_count < 3:
+                    # pkt = self._pkt_buf.drop_pkt(0)
+                    # self._msg_size = None
+                    # self._msg_count += 1
+                    # logger.error("Dropping bad pkt '%s' msg_count=%d.", pkt.hex(), self._msg_count)
+                    # continue
+
+
                 if self._fail_count < len(pkt_orders):
                     logger.warning("Failed to parse msg N=%d. '%s'. Trying to recover...",
                             self._msg_count, str(e))
