@@ -46,7 +46,8 @@ for x in BlueBerryLogEntryFields:
 
 class _PacketBuffer:
     """
-    FIFO buffer preserving BLE packets to handle packets out of order (bug in dbus/bluez!?)
+    FIFO buffer preserving BLE packets. can handle packets out of order and
+    drop induvidual packets
     'pkt' - bluteooth package (chunk of bytes)
     """
 
@@ -259,6 +260,7 @@ class BlueBerryDeserializer:
         return done
 
     def _parse_pkt_buf(self, pkt_order=None):
+        """ parse data previously added to pkt_buf """
         if self._msg_size is None:
             self._msg_size = self._pkt_buf.getc() # raises EOFError if no data
 
@@ -290,18 +292,11 @@ class BlueBerryDeserializer:
             chunk = bytearray(chunk)
 
         self._pkt_buf.write(chunk)
-        # pkt order. 0 is the oldest 
-        pkt_orders = (
-                None,
-                [0, 2, 1, 3, 4],
-                [1, 2, 3, 4, 5],
-        )
-        pkt_order = None
 
         while True:
 
             try:
-                done = self._parse_pkt_buf(pkt_order)
+                done = self._parse_pkt_buf()
                 if self._fail_count:
                     self._fail_count = 0
                     logger.debug("Successfully recovered")
@@ -315,19 +310,12 @@ class BlueBerryDeserializer:
             except DecodeError as e:
 
                 self._fail_count += 1
-
-                # if self._fail_count < 3:
-                    # pkt = self._pkt_buf.drop_pkt(0)
-                    # self._msg_size = None
-                    # self._msg_count += 1
-                    # logger.error("Dropping bad pkt '%s' msg_count=%d.", pkt.hex(), self._msg_count)
-                    # continue
-
-
-                if self._fail_count < len(pkt_orders):
-                    logger.warning("Failed to parse msg N=%d. '%s'. Trying to recover...",
-                            self._msg_count, str(e))
-                    pkt_order = pkt_orders[self._fail_count]
+                if self._fail_count < 3:
+                    pkt = self._pkt_buf.drop_pkt(0)
+                    logger.error("Dropping invalid pkt '%s' N=%d, msg_size=%d", 
+                            pkt.hex(), self._msg_count, self._msg_size)
+                    self._msg_size = None
+                    self._msg_count += 1
                     continue
 
                 logger.error("Failed to parse msg N=%d. '%s'", self._msg_count, str(e))
