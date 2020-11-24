@@ -340,7 +340,7 @@ class BlueBerryClient():
                 self._err_fetch = e
                 done = True
 
-            if nentries and nentries >= bbd.nentries:
+            if nentries and bbd.nentries >= nentries:
                 done = True
 
             if done:
