@@ -2,8 +2,8 @@ import asyncio
 import logging
 from collections import OrderedDict
 from platform import system
-
-from bleak import BleakClient, discover
+from time import time
+from bleak import BleakClient, BleakScanner 
 from bleak.exc import BleakError
 
 if system() == "Linux":
@@ -44,10 +44,10 @@ class BlueBerryClient():
         address = kwargs.get("address")
         if address is None:
             raise ValueError("invalid address")
+        self._address = address
         self._password = kwargs.get("password")
-
-        timeout = kwargs.get("timeout", 5.0)
-        self._bc = BleakClient(address, timeout=timeout)
+        self._timeout = kwargs.get("timeout", 5.0)
+        self._bc = None 
         self._evt_cmd = ATimeoutEvent()
         self._evt_fetch = ATimeoutEvent()
 
@@ -86,7 +86,14 @@ class BlueBerryClient():
             self._evt_fetch.set()
 
     async def connect(self):
-        # called on enter
+        # scan first seems faster and more reliable
+        devs = await _scan(count=1, filter_cb=_scan_connect_filter, filter_arg=self._address, timeout=self._timeout)
+        if len(devs) < 1:
+            raise RuntimeError("Device not found")
+
+        assert(len(devs) == 1)
+
+        self._bc = BleakClient(devs[0], timeout=self._timeout)
         await self._bc.connect()
         # TODO unlock only needed for same operations do it when needed
         await self._unlock(self._password)
@@ -364,6 +371,59 @@ class BlueBerryClient():
             logger.debug("err %s" % str(self._err_fetch))
             raise self._err_fetch
 
+def _scan_connect_filter(dev, arg):
+    address = arg
+
+    if address.lower() == dev.address:
+        return True
+
+    if address.upper() == dev.address:
+        return True
+
+    return False
+
+def _scan_filter(dev, arg):
+    if "uuids" in dev.metadata:
+        advertised = dev.metadata["uuids"]
+        suuid = str(UUIDS.S_LOG)
+        if suuid.lower() in advertised:
+            return True
+        if suuid.upper() in advertised:
+            return True
+    elif "BlueBerry" in dev.name:
+        # Advertised UUIDs sometimes slow to retrieve
+        logger.warning("no matching service uuid but matching name %s", dev)
+        return True
+
+    logger.debug("ignoring device: %s", dev)
+    return False
+
+async def _scan(timeout=None, filter_cb=None, filter_arg=None, count=None, **kwargs):
+    scanner = BleakScanner()
+    await scanner.start()
+    devices = {}
+    t_start = time()
+    while True:
+        done = False
+        for dev in await scanner.get_discovered_devices():
+
+            if filter_cb and filter_cb(dev, filter_arg):
+                logger.debug("Device found %s", dev)
+                devices[dev.address] = dev
+
+                if count and len(devices) >= count:
+                    done = True
+                    break
+        if done:
+            break
+        await asyncio.sleep(0.25)
+
+        if timeout and (time() - t_start) >= timeout:
+            logger.debug("scan timeout")
+            break
+
+    await scanner.stop()
+    return list(devices.values())
 
 
 async def scan(outfile=None, fmt=None, timeout=None, **kwargs):
@@ -373,28 +433,11 @@ async def scan(outfile=None, fmt=None, timeout=None, **kwargs):
         header=["ADDR", "RSSI", "NAME"],
         colwidths=[20, 10, 4]
     )
+    devices = {} 
+    bb_devices = await _scan(timeout=timeout, filter_cb=_scan_filter)
+    for dev in bb_devices:
+        row = (dev.address, str(dev.rssi), dev.name)
+        out.write_row(row)
+        devices[str(dev.address)] = row
 
-    devices = {}
-    candidates = await discover(timeout=timeout)
-    for d in candidates:
-        match = False
-        if "uuids" in d.metadata:
-            advertised = d.metadata["uuids"]
-            suuid = str(UUIDS.S_LOG)
-            if suuid.lower() in advertised or suuid.upper() in advertised:
-                match = True
-        elif "BlueBerry" in d.name:
-            # Advertised UUIDs sometimes slow to retrieve
-            logger.warning("no matching service uuid but matching name {}".format(d))
-            match = True
-        else:
-            logger.debug("ignoring device={}".format(d))
-
-        if match:
-            logger.debug("details={}, metadata={}".format(d.details, d.metadata))
-            row = (d.address, str(d.rssi), d.name)
-            out.write_row(row)
-            devices[str(d.address)] = row
-
-    return devices
-
+    return list(devices)
