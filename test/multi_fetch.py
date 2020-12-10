@@ -51,6 +51,7 @@ def bblog_devices(from_file = "bb_addresses.txt"):
         res = bblog("scan", timeout=10)
         print(res)
         lines = res.split("\n")
+        lines = lines[1:]
 
     devices = {}
     for line in lines:
@@ -88,18 +89,13 @@ def bblog_foreach(addresses, subarg, **kwargs):
             if status != 0:
                 print_err("pid", pid, "exit non-zero", status)
             #out, err = p.communicate()
-            print_inf("Waiting for ", len(ps), "processes...")
-        if not ps:
-            break
+            print_inf("Waiting for", len(ps), "processes...")
+            if not ps:
+                break
 
+    run(["wc", "-l", opath("*")], shell=True)
     for of in outfiles:
         pass
-    # eta = n_samples/rtd_hz + 2)
-    # print("Waiting ", eta, "s to complete fetch...")
-    # eta = n_samples/rtd_hz + 2)
-    # sleep(eta)
-    # print("n_samples=", n_samples, "rtd_hz=",rtd_hz)
-
 
 
 def main():
@@ -112,5 +108,7 @@ def main():
     print(devices)
 
     addresses = devices.keys()
-    bblog_foreach(addresses, "device-info")
+    #bblog_foreach(addresses, "device-info")
+    #bblog_foreach(addresses, "fetch", rtd=25, num=250)
+    bblog_foreach(addresses, "fetch", rtd=25, num=1000)
 main()
