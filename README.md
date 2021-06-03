@@ -28,8 +28,8 @@ bblog scan
 # enable logging
 bblog config-write --logging=on --address <address_or_MacOSid>
 
-# fetch 3 seconds of real time sensor data
-bblog fetch --rtd -n3 --address <address_or_MacOSid>
+# fetch 3 seconds of real time data
+bblog fetch --rtd=1 -n3 --address=<address_or_MacOSid>
 ```
 
 Firmware update
