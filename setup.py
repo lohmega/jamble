@@ -30,7 +30,7 @@ setuptools.setup(
     ],
     install_requires=[
         "protobuf",
-        "bleak > 0.5.1",
+        "bleak >= 0.11.0",
     ],
     python_requires='>=3.4',
 )

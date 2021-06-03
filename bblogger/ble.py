@@ -166,7 +166,7 @@ class BlueBerryClient():
             logger.error("notification timeout")
 
         # hide misleading error on unexpected disconnect
-        if await self._bc.is_connected():
+        if self._bc.is_connected:
             await self._bc.stop_notify(rxuuid)
         else:
             logger.warning("Unexpected disconnect")
@@ -353,7 +353,7 @@ class BlueBerryClient():
             logger.error("Notification timeout after %d sec" % timeout)
 
         # hide missleading error on unexpected disconnect
-        if await self._bc.is_connected():
+        if self._bc.is_connected:
             await self._bc.stop_notify(uuid_)
         else:
             logger.warning("Unexpected disconnect")
