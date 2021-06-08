@@ -58,7 +58,11 @@ async def do_dfu(address, package, boot, **kwargs):
     this_dir = abspath(dirname(__file__))
     sys.path.insert(0, this_dir)
 
-    from bblogger.dfu import device_firmware_upgrade, app_to_dfu_address
+    from bblogger.dfu import device_firmware_upgrade, app_to_dfu_address, scan_dfu_devices
+
+    if kwargs.get("scan"):
+        scan_dfu_devices()
+        return
 
     if address is None:
         raise ValueError("No address given")
@@ -69,11 +73,13 @@ async def do_dfu(address, package, boot, **kwargs):
         dfu_addr = address
     else:
         app_addr = address
-        dfu_addr = await app_to_dfu_address(app_addr)
 
         logger.info("Entering DFU from app ...")
         async with bbl.BlueBerryClient(address=app_addr, **kwargs) as bbc:
             d = await bbc.enter_dfu() 
+
+        # must be after enter_dfu()
+        dfu_addr = await app_to_dfu_address(app_addr)
 
     if boot is None and package is None:
         raise ValueError("No package given")
@@ -341,6 +347,11 @@ def parse_args():
         help="Device have no application and already in DFU mode. Assumes \
         provided address is the DFU address which might be different from the \
         application address",
+    )
+    sp.add_argument(
+        "--scan",
+        action="store_true",
+        help="Scan and list devices in DFU mode. Might show unrelated devices."
     )
     sp.set_defaults(_actionfunc=do_dfu)
     sps.append(sp)

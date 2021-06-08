@@ -146,6 +146,10 @@ class BleAddress:
 
         return self._int - other._int
 
+    def __hash__(self):
+        """ needed to have class hashable """
+        return id(self)
+
     def __eq__(self, other):
         return self.__cmp__(other) == 0
 
@@ -323,8 +327,8 @@ class DfuDevice:
         return await asyncio.wait_for(self.__cp_cmd(opcode, **kwargs), timeout=20)
 
     async def __cp_cmd(self, opcode, **kwargs):
-        """ 
-        control point (cp) characteristic command - handles request, 
+        """
+        control point (cp) characteristic command - handles request,
         parses response and check success.
         returns payload (if any).
 
@@ -332,7 +336,6 @@ class DfuDevice:
 
         note: enable and disable control point notifications for every command/operation do not work.
         unclear why - have not investigated it.
-        
         """
         cpuuid = BLE_UUID.C_DFU_CONTROL_POINT
         txdata = operation_txd_pack(opcode, **kwargs)
@@ -530,7 +533,7 @@ class DfuDevice:
         """ Not needed in BLE transport """
         tx_id = randint(0, 255)
         try:
-            rx_id = self.cp_cmd(OP_CODE.PING, ping_id=tx_id)
+            rx_id = await self.cp_cmd(OP_CODE.PING, ping_id=tx_id)
         except OperationResCodeError as e:
             logger.debug("ignoring ping response error {}".format(e))
             # Returning an error code is seen as good enough. The bootloader is up and running
@@ -540,6 +543,25 @@ class DfuDevice:
         expected_rx_id = (tx_id + 1) % 256
         return bool(rx_id == expected_rx_id)
 
+
+def is_dfu_device(dev):
+        match = None
+        if "BBDfu" in dev.name:
+            return 1
+
+        if "uuids" not in dev.metadata:
+            return 0
+
+        advertised = dev.metadata["uuids"] # service uuids
+        # logger.debug(str(BLE_UUID.S_NORDIC_SEMICONDUCTOR_ASA) + " in " + str(advertised))
+        if BLE_UUID.S_NORDIC_SEMICONDUCTOR_ASA in advertised:
+            return 2
+        elif BLE_UUID.C_DFU_BUTTONLESS_BONDED in advertised:
+            return 3
+        elif BLE_UUID.C_DFU_BUTTONLESS_UNBONDED in advertised:
+            return 4
+
+        return 0
 
 async def scan_dfu_devices(app_address=None, timeout=10):
     """ Scan (discover) devices already in bootloader """
@@ -606,7 +628,7 @@ if platform == "darwin":
         return uuid_to_addr
 
     async def __find_unbounded_dfu_osid(app_osid):
-        """ find MacOS BLE device UUID (called `osid` here to avoid confusing
+        """ find MacOS BLE device UUID (called `osid` here to avoid confusion
         with MAC address and BLE service/characteristic uuid:s which are
         unrelated) for a device in unbounded DFU mode. i.e. the BLE MAC address
         changed to +1.
@@ -636,12 +658,16 @@ if platform == "darwin":
                 candidates.append(dev_info)
             else:
                 logger.debug("ignoring device {}".format(dev_info))
+
+        if not candidates:
+            raise RuntimeError("Failed to find any devices in DFU mode")
+
         # currently Bleak only support advertiesed service uuids, not characteristic uuids.
         for dev_info in candidates:
-            # send a ping to candidate. this should make MacOS to write the MAC address to plist
+            # send a ping to candidate. this should make MacOS write the MAC address to plist
             try:
                 async with DfuDevice(address=dev_info.address) as dev:
-                    success = dev._ping()
+                    success = await dev._ping()
                     logger.debug(
                         "DFU ping to {} - {}".format(
                             dev_info.address, "success" if success else "failed"
@@ -652,22 +678,27 @@ if platform == "darwin":
                 logger.debug("Ignoring {}".format(e))
 
         # might take some time before plist is updated?
-        for attempt in range(3):
+        for attempt in range(2):
             osid_to_addr = await __get_addr_from_CoreBluetoothCache()
             addr_to_osid = {v: k for k, v in osid_to_addr.items()}
             if dfu_addr in addr_to_osid:
                 return addr_to_osid[dfu_addr]
             logger.debug("Failed attempt to find MacOS unbounded DFU device UUID")
-            asyncio.sleep(1)
+            await asyncio.sleep(1)
 
-        raise RuntimeError("Failed to find MacOS unbounded DFU device UUID")
+
+        if 1:
+            logger.warning("Failed to verify DFU device is same as requested. Using first found")
+            return candidates[0].address
+        else:
+            raise RuntimeError("Failed to find MacOS unbounded DFU device UUID")
 
 
 async def app_to_dfu_address(app_addr):
     
     if platform == "darwin":
         logger.warning("DFU on MacOS is experimental")
-        dfu_addr = __find_unbounded_dfu_osid(app_osid=app_addr)
+        dfu_addr = await __find_unbounded_dfu_osid(app_osid=app_addr)
     else:
         app_addr = BleAddress(app_addr)
         dfu_addr = app_addr.dfu_addr()

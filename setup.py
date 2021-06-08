@@ -30,6 +30,7 @@ setuptools.setup(
     ],
     install_requires=[
         "protobuf",
+        "intelhex",
         "bleak >= 0.11.0",
     ],
     python_requires='>=3.4',
