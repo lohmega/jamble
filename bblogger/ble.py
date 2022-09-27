@@ -2,8 +2,9 @@ import asyncio
 import logging
 from collections import OrderedDict
 from platform import system
+from types import SimpleNamespace
 
-from bleak import BleakClient, discover
+from bleak import BleakClient, BleakScanner
 from bleak.exc import BleakError
 
 if system() == "Linux":
@@ -364,37 +365,67 @@ class BlueBerryClient():
             logger.debug("err %s" % str(self._err_fetch))
             raise self._err_fetch
 
+_scan = SimpleNamespace(output=None, devices={})
+
+def _is_match(dev, advertisement_data):
+
+    service_uuids = advertisement_data.service_uuids
+
+    suuid = str(UUIDS.S_LOG)
+
+    if suuid.lower() in service_uuids:
+         return True
+
+    if suuid.upper() in service_uuids:
+        return True
+
+    if "BlueBerry" in dev.name:
+        logger.warning("no matching service uuid but matching name {}".format(dev))
+        return True
+
+    return False
+
+def _scanner_callback(dev, advertisement_data):
+    global _scan
+
+    if not _is_match(dev, advertisement_data):
+        logger.debug("ignoring device={}".format(dev))
+        return
+
+    if dev.address in _scan.devices:
+        # already printed
+        return
+    _scan.devices[dev.address] = dev
+
+    logger.debug("details={}, metadata={}".format(dev.details, dev.metadata))
+    row = (dev.address, str(dev.rssi), dev.name)
+
+    _scan.output.write_row(row)
 
 
 async def scan(outfile=None, fmt=None, timeout=None, **kwargs):
-    out = mk_OutputWriter(
+    global _scan
+
+    _scan.output = mk_OutputWriter(
         outfile = outfile,
         fmt = fmt,
         header=["ADDR", "RSSI", "NAME"],
         colwidths=[20, 10, 4]
     )
 
-    devices = {}
-    candidates = await discover(timeout=timeout)
-    for d in candidates:
-        match = False
-        if "uuids" in d.metadata:
-            advertised = d.metadata["uuids"]
-            suuid = str(UUIDS.S_LOG)
-            if suuid.lower() in advertised or suuid.upper() in advertised:
-                match = True
-        elif "BlueBerry" in d.name:
-            # Advertised UUIDs sometimes slow to retrieve
-            logger.warning("no matching service uuid but matching name {}".format(d))
-            match = True
+    scanner = BleakScanner(_scanner_callback)
+
+    await scanner.start()
+
+    try:
+        if timeout:
+            await asyncio.sleep(timeout)
         else:
-            logger.debug("ignoring device={}".format(d))
+            while True:
+                await asyncio.sleep(1)
 
-        if match:
-            logger.debug("details={}, metadata={}".format(d.details, d.metadata))
-            row = (d.address, str(d.rssi), d.name)
-            out.write_row(row)
-            devices[str(d.address)] = row
+    except KeyboardInterrupt:
+        pass
 
-    return devices
+    await scanner.stop()
 

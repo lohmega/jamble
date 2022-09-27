@@ -240,6 +240,7 @@ class BlueBerryDeserializer:
     def parse_msg_bytes(self, msg_bytes):
 
         self._pb.Clear()
+        msg_bytes = bytes(msg_bytes)
         # ignore E1101: Instance of 'bb_log_entry' has no 'FromString' member (no-member)
         pb_msg = self._pb.FromString(msg_bytes) # pylint: disable=E1101
         odmsg = self._MessageToOrderedDict(pb_msg, columnize=True)

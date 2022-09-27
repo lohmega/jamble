@@ -257,6 +257,27 @@ class BlueBerryLogEntryFields(Enum):
         tounit=lambda x: x * 1.0,
     )
 
+    _INT_GPIO0 = _BlueBerryLogEntryField(
+        enmask=None,
+        pbname="int_gpio0",
+        symbol="int0",
+        unit="",
+        tounit=lambda x: x,
+    )
+    _INT_GPIO1 = _BlueBerryLogEntryField(
+        enmask=None,
+        pbname="int_gpio1",
+        symbol="int1",
+        unit="",
+        tounit=lambda x: x,
+    )
+    _INT_ACC = _BlueBerryLogEntryField(
+        enmask=None,
+        pbname="int_acc",
+        symbol="iacc1",
+        unit="",
+        tounit=lambda x: x,
+    )
 
 def enum2str(enumclass, val):
     """
